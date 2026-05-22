@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QGroupBox, QHeaderView)
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import QDialog, QLineEdit, QMenu
 
 from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
 
@@ -14,6 +15,53 @@ MODE_COLORS = {
     "PARTIAL": "#1E90FF", "NOMINAL": "#228B22", "EMERGENCY": "#DC143C", "TRANSITION": "#A9A9A9"
 }
 
+class LoginDialog(QDialog):
+    """Заглушка окна авторизации. Поля по умолчанию пустые"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Авторизация")
+        self.setModal(True)
+        self.resize(300, 160)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Логин:"))
+        self.input_login = QLineEdit()  # Пустое по умолчанию
+        layout.addWidget(self.input_login)
+
+        layout.addWidget(QLabel("Пароль:"))
+        self.input_pass = QLineEdit()
+        self.input_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.input_pass)
+
+        self.btn_enter = QPushButton("Войти")
+        self.btn_enter.clicked.connect(self.accept)  # Заглушка: всегда успех
+        layout.addWidget(self.btn_enter)
+        self.setLayout(layout)
+
+
+class ChangePasswordDialog(QDialog):
+    """Заглушка окна смены пароля"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Смена пароля")
+        self.setModal(True)
+        self.resize(320, 220)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        for label_text in ["Текущий пароль:", "Новый пароль:", "Подтверждение нового пароля:"]:
+            layout.addWidget(QLabel(label_text))
+            inp = QLineEdit()
+            inp.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(inp)
+
+        self.btn_save = QPushButton("Сохранить")
+        self.btn_save.clicked.connect(self.accept)  # Заглушка
+        layout.addWidget(self.btn_save)
+        self.setLayout(layout)
 
 class GTUWindow(QMainWindow):
     """ Главное окно приложения.
@@ -79,6 +127,9 @@ class GTUWindow(QMainWindow):
 
         # Управление (кнопки остановка и запуск начинают и прерывают мониторинг соответственно)
         ctrl_layout = QHBoxLayout()
+        self.btn_account = QPushButton("Аккаунт")
+        self.btn_account.setMenu(self._create_account_menu())
+        ctrl_layout.addWidget(self.btn_account)
         self.btn_start = QPushButton("Запуск")
         self.btn_stop = QPushButton("Остановка")
         self.btn_start.clicked.connect(self._start_simulation)
@@ -215,9 +266,33 @@ class GTUWindow(QMainWindow):
             self.lbl_mode.setText("ОЖИДАНИЕ")
             self.lbl_mode.setStyleSheet("background-color: #333; color: white; border-radius: 8px; padding: 10px;")
 
+    def _create_account_menu(self):
+        """Формирует выпадающее меню для кнопки Аккаунт"""
+        menu = QMenu(self)
+        menu.addAction("Сменить пароль", self._open_change_password)
+        menu.addAction("Выйти", self._handle_logout)
+        return menu
+
+    def _open_change_password(self):
+        """Показывает окно смены пароля (заглушка)"""
+        dialog = ChangePasswordDialog(self)
+        dialog.exec()
+
+    def _handle_logout(self):
+        """Имитация выхода: скрывает основное окно, вызывает логин.
+        При успешном входе снова показывает главное окно."""
+        self.hide()
+        login = LoginDialog(self)
+        if login.exec() == QDialog.DialogCode.Accepted:
+            self.show()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = GTUWindow()
-    window.show()
-    sys.exit(app.exec())
+    login = LoginDialog()
+    if login.exec() == QDialog.DialogCode.Accepted:
+        # успешный вход - запускаем mainwindow
+        window = GTUWindow()
+        window.show()
+        sys.exit(app.exec())
+    else:
+        sys.exit(0)  # Завершение при отмене входа
