@@ -1,15 +1,25 @@
+import bcrypt
+
+from config import AuthConfig
+
+
+from typing import Dict
+
+
 class BcryptHasher:
-    """Хеширование паролей"""
+    """Хеширование и проверка """
 
-    def __init__(self):
-        self.rounds = config.bcrypt_rounds
+    def __init__(self, config: AuthConfig = None):
+        self.rounds = (config or AuthConfig()).bcrypt_rounds
 
-    def hash_password(self, pwd: str) -> dict:
+    def hash_password(self, password: str) -> Dict[str, str]:
+
         return {
             'hash': bcrypt.hashpw(
-                pwd.encode(), bcrypt.gensalt(rounds=self.rounds)
+                password.encode(),
+                bcrypt.gensalt(rounds=self.rounds)
             ).decode()
         }
 
-    def verify_password(self, pwd: str, stored: str) -> bool:
-        return bcrypt.checkpw(pwd.encode(), stored.encode())
+    def verify_password(self, password: str, stored_hash: str) -> bool:
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())

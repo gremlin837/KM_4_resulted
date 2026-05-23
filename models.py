@@ -1,9 +1,10 @@
-from dataclasses import  dataclass
-import  time
+from dataclasses import dataclass
+import time
+
 
 @dataclass
-class User():
-    username : str
+class User:
+    username: str
     password_hash: str
     is_admin: bool
     failed_attempts: int = 0
@@ -16,4 +17,4 @@ class User():
     def remaining_lockout_minutes(self):
         if not self.is_locked:
             return 0
-        return int((self.locked_until - int(time.time()))/60)
+        return int((self.locked_until - int(time.time())) / 60)

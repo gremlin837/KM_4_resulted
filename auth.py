@@ -7,10 +7,8 @@ from datetime import datetime, timedelta
 import bcrypt
 import jwt  # PyJWT
 
-from storage.database import config, Database #для бдшки с юзерами
-#доработать/переработать
-
-
+from storage.database import config, Database  # для бдшки с юзерами
+# доработать/переработать
 
 
 class AuthSystem:
@@ -21,7 +19,6 @@ class AuthSystem:
         self.hasher = BcryptHasher()
         self.cache: Dict[str, object] = {}
         self._rate_limit_store: Dict[str, List[float]] = {}
-
 
     # Rate limiting
 
@@ -42,7 +39,6 @@ class AuthSystem:
 
         self._rate_limit_store[ip].append(now)
         return True, "OK"
-
 
     # Вспомогательные методы
 
@@ -70,11 +66,16 @@ class AuthSystem:
     def _check_pwd(self, pwd: str, adm: bool) -> Tuple[bool, str]:
         mn = config.admin_min_length if adm else config.user_min_length
         pat = rf'[{re.escape(config.special_chars)}]'
-        if len(pwd) < mn:          return False, f"Мин. длина: {mn}"
-        if not re.search(r'[A-Z]', pwd): return False, "Нужна заглавная буква"
-        if not re.search(r'[a-z]', pwd): return False, "Нужна строчная буква"
-        if not re.search(r'[0-9]', pwd): return False, "Нужна цифра"
-        if not re.search(pat, pwd):      return False, f"Нужен спецсимвол ({config.special_chars})"
+        if len(pwd) < mn:
+            return False, f"Мин. длина: {mn}"
+        if not re.search(r'[A-Z]', pwd):
+            return False, "Нужна заглавная буква"
+        if not re.search(r'[a-z]', pwd):
+            return False, "Нужна строчная буква"
+        if not re.search(r'[0-9]', pwd):
+            return False, "Нужна цифра"
+        if not re.search(pat, pwd):
+            return False, f"Нужен спецсимвол ({config.special_chars})"
         return True, "OK"
 
     def _not_contain_user(self, pwd: str, name: str) -> Tuple[bool, str]:
@@ -83,7 +84,6 @@ class AuthSystem:
             if name.lower() in pwd.lower()
             else (True, "OK")
         )
-
 
     # Основные методы
 
@@ -108,13 +108,16 @@ class AuthSystem:
                     time.time() + config.lockout_minutes * 60
                 )
                 self._save(acc)
-                return (False,
-                        f"Аккаунт заблокирован на {config.lockout_minutes} мин.",
-                        None)
+                return (
+                    False, f"Аккаунт заблокирован на {
+                        config.lockout_minutes} мин.", None)
             self._save(acc)
-            return (False,
-                    f"Неверный пароль. Осталось: {config.max_attempts - acc.failed}",
-                    None)
+            return (
+                False,
+                f"Неверный пароль. Осталось: {
+                    config.max_attempts -
+                    acc.failed}",
+                None)
 
         acc.failed = acc.locked_until = 0
         self.db.update(
@@ -130,15 +133,17 @@ class AuthSystem:
     def change(self, acc, new_pwd: str) -> Tuple[bool, str]:
         """Смена пароля"""
         v, m = self._check_pwd(new_pwd, acc.is_admin)
-        if not v: return False, m
+        if not v:
+            return False, m
         v, m = self._not_contain_user(new_pwd, acc.username)
-        if not v: return False, m
+        if not v:
+            return False, m
         h = self.hasher.hash_password(new_pwd)
         acc.password, acc.need_change = h['hash'], False
         self._save(acc)
         return True, "Пароль изменён"
 
-   #обговорить нало оно нам или нет
+   # обговорить нало оно нам или нет
     def admin_reset_password(self, admin_acc, target_username: str,
                              new_pwd: str) -> Tuple[bool, str]:
         """Сброс пароля администратором"""
@@ -148,9 +153,11 @@ class AuthSystem:
         if not target:
             return False, "Пользователь не найден"
         v, m = self._check_pwd(new_pwd, target.is_admin)
-        if not v: return False, m
+        if not v:
+            return False, m
         v, m = self._not_contain_user(new_pwd, target_username)
-        if not v: return False, m
+        if not v:
+            return False, m
         h = self.hasher.hash_password(new_pwd)
         target.password = h['hash']
         target.need_change = True
@@ -185,7 +192,6 @@ class AuthSystem:
                 True
             )
             print("Создан тестовый аккаунт: admin / Admin@12345")
-
 
     # JWT токены (для API)
 
@@ -222,5 +228,7 @@ class AuthSystem:
             "exp": datetime.utcnow() + timedelta(hours=24),
             "iat": datetime.utcnow()
         }
-        return _jwt.encode(payload, config.jwt_secret, algorithm=config.jwt_algorithm)
-
+        return _jwt.encode(
+            payload,
+            config.jwt_secret,
+            algorithm=config.jwt_algorithm)
