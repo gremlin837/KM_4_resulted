@@ -7,25 +7,10 @@ from datetime import datetime, timedelta
 import bcrypt
 import jwt  # PyJWT
 
-#from storage.database import config, Database для бдшки с юзерами
+from storage.database import config, Database #для бдшки с юзерами
 #доработать/переработать
 
 
-class BcryptHasher:
-    """Хеширование паролей"""
-
-    def __init__(self):
-        self.rounds = config.bcrypt_rounds
-
-    def hash_password(self, pwd: str) -> dict:
-        return {
-            'hash': bcrypt.hashpw(
-                pwd.encode(), bcrypt.gensalt(rounds=self.rounds)
-            ).decode()
-        }
-
-    def verify_password(self, pwd: str, stored: str) -> bool:
-        return bcrypt.checkpw(pwd.encode(), stored.encode())
 
 
 class AuthSystem:
@@ -238,3 +223,4 @@ class AuthSystem:
             "iat": datetime.utcnow()
         }
         return _jwt.encode(payload, config.jwt_secret, algorithm=config.jwt_algorithm)
+
