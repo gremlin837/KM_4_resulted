@@ -5,13 +5,18 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e2c53832-5c93-4b62-84f1-d7c258ab2e90" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/interfaces.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/auth_module/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/auth_module/auth.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/auth_module/memory_repository.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hasher.py" beforeDir="false" afterPath="$PROJECT_DIR$/hasher.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/token_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/token_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/auth.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hasher.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/hasher.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/interfaces.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/interfaces.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/token_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/token_service.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -43,6 +48,7 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "Python.test_hash.executor": "Run",
+    "Python.tests.executor": "Run",
     "Python.token_service.executor": "Run",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -52,6 +58,7 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\User\PycharmProjects\kaem4ahahahah\ auth_module" />
       <recent name="C:\Users\User\PycharmProjects\kaem4ahahahah" />
     </key>
   </component>

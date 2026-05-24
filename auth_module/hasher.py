@@ -1,6 +1,6 @@
 import bcrypt
 
-from config import AuthConfig
+from .config import AuthConfig
 
 
 from typing import Dict

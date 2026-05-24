@@ -14,7 +14,7 @@ class AccountLocked(AuthError):
     pass
 
 
-class RateLimitExpected(AuthError):
+class RateLimitExceeded(AuthError):
     pass
 
 
