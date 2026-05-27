@@ -1,6 +1,6 @@
 # интерфейс тестовая версия
 import sys
-import random
+from gtu_simulator import GTUSimulator, GTUMode
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
                              QPushButton, QGroupBox, QHeaderView)
@@ -76,8 +76,25 @@ class GTUWindow(QMainWindow):
         self.setWindowTitle("Мониторинг ГТУ (Тестовый клиент)")
         self.resize(850, 600)
         self.sim_running = False # флаг
-        self.mode_cycle_idx = 0
-        self._ticks = 0 # Счётчик тактов таймера для управления цикличностью режимов
+
+        # Инициализация реального симулятора
+        self.simulator = GTUSimulator(interval=1.0)
+        self.current_sim_mode = GTUMode.STOP  # Текущий режим симуляции
+        self.sim_thread = None  # Поток для фоновой смены режимов (но здесь используется таймер GUI)
+
+
+        self.simulation_step = 0  # Шаг симуляции (0-START, 1-IDLE, ... итд)
+        self.step_timer = 0  # Счетчик секунд внутри текущего шага
+
+        # Конфигурация цикла из Приложение 1 (сколько по времени длится каждый режим)
+        self.cycle_config = [
+            (GTUMode.START, 200),
+            (GTUMode.IDLE, 300),
+            (GTUMode.PARTIAL, 450),
+            (GTUMode.NOMINAL, 500),
+            (GTUMode.EMERGENCY, 50),
+            (GTUMode.STOP, 300)
+        ]
 
         self.sim_timer = QTimer(self) # таймер для переодического обновления данных(1 секунда)
         self.sim_timer.timeout.connect(self._generate_and_update)
@@ -142,52 +159,48 @@ class GTUWindow(QMainWindow):
 
     def _generate_and_update(self):
         """
-                Обработчик таймера: генерация тестовых данных, классификация и обновление UI.
-                Вызывается автоматически каждую секунду.
-                - Каждые 15 смен циклически меняет режим работы ГТУ.
-                - Накладывает гауссовский шум для имитации реальных показаний датчиков (эмуляция Прил. 1).
-                - С вероятностью 5% искусственно завышает вибрацию для проверки детекции аномалий.
-                - Вызывает GTUAnalyzer.classify() для определения режима и поиска отклонений.
-                - Обновляет таблицу показателей и цветовую индикацию режима.
-                - Выводит краткое сообщение в строку статуса о состоянии параметров.
-                """
-        self._ticks += 1
-        if self._ticks % 15 == 0:
-            self.mode_cycle_idx = (self.mode_cycle_idx + 1) % 5
+        Получает данные от реального симулятора GTUSimulator(Приложение 1) и обновляет UI.
+        Также управляет циклической сменой режимов работы ГТУ.
+        """
+        # Смена режимов (cycle_worker из Приложения 1)
+        if self.sim_running:
+            mode, duration = self.cycle_config[self.simulation_step]
 
-        # Базовые центры режимов (из Приложения 1)
-        bases = [
-            {"rpm": 0, "T": 22.5, "P": 101.0, "fuel": 0, "vib": 0.1, "iga": 0},
-            {"rpm": 1500, "T": 210, "P": 110, "fuel": 250, "vib": 1.2, "iga": 50},
-            {"rpm": 3000, "T": 400, "P": 120, "fuel": 500, "vib": 2.0, "iga": 20},
-            {"rpm": 5500, "T": 500, "P": 130, "fuel": 1000, "vib": 3.0, "iga": 50},
-            {"rpm": 8000, "T": 650, "P": 150, "fuel": 2000, "vib": 4.0, "iga": 99}
-        ]
-        base = bases[self.mode_cycle_idx]
-        noise = lambda val, sigma: max(0, val + random.gauss(0, sigma)) # нужен исключительно для тестовой версии (симуляция погрешностей)
+            # Если текущий режим симулятора не совпадает с запланированным, он заменяется
+            if self.simulator.current_mode != mode:
+                self.simulator.set_mode(mode)
+                self.current_sim_mode = mode
 
-        rpm = noise(base["rpm"], 15 if base["rpm"] > 0 else 0)
-        temp = noise(base["T"], 10)
-        pres = noise(base["P"], 0.8)
-        fuel = noise(base["fuel"], 25 if base["fuel"] > 0 else 0)
-        vib = noise(base["vib"], 0.15)
-        iga = noise(base["iga"], 3)
+            self.step_timer += 1
+            # Если время этапа истекло => начинается следующий
+            if self.step_timer >= duration:
+                self.step_timer = 0
+                self.simulation_step = (self.simulation_step + 1) % len(self.cycle_config)
 
-        # 5% вероятность выброса для демонстрации детекции
-        # резкий скачок показаний, тестирует что детектор отклонений работает корректно
-        if random.random() < 0.05:
-            vib += random.uniform(2.0, 4.0)
+            # Получение показаний от симулятора
+            readings = self.simulator.get_readings()
 
-        # Вызов анализатора
-        mode, anomalies = GTUAnalyzer.classify(rpm, temp, pres, fuel, vib, iga)
+            # значения по ключам, которые использует анализатор
+            rpm = readings['rpm']
+            temp = readings['exhaust_temp']
+            pres = readings['inlet_pressure']
+            fuel = readings['fuel_flow']
+            vib = readings['vibration']
+            iga = readings['iga_position']
 
-        self._update_table(rpm, temp, pres, fuel, vib, iga)
-        self._update_mode_display(mode)
+            # Классификация и поиск аномалий через GTUAnalyzer
+            # Анализатор сам определит режим по оборотам, но мы можем сравнить его с ожидаемым
+            detected_mode, anomalies = GTUAnalyzer.classify(rpm, temp, pres, fuel, vib, iga)
 
-        if anomalies:
-            self.statusBar().showMessage("Обнаружены отклонения параметров", 3000)
-        else:
-            self.statusBar().showMessage(f"Режим: {mode} | Параметры в норме")
+            # Обновление интерфейса
+            self._update_table(rpm, temp, pres, fuel, vib, iga)
+            self._update_mode_display(detected_mode)  # Показываем тот режим, который определил анализатор
+
+            # Статус бар (снизу слева)
+            if anomalies:
+                self.statusBar().showMessage(f"Аномалия в режиме {detected_mode}: {anomalies[0]}", 5000)
+            else:
+                self.statusBar().showMessage(f"Режим: {detected_mode} | Параметры в норме")
 
     def _update_table(self, rpm, temp, pres, fuel, vib, iga):
         """
@@ -241,7 +254,6 @@ class GTUWindow(QMainWindow):
     def _start_simulation(self):
         """
                Запуск процесса генерации данных.
-               - Запускает QTimer с интервалом 1 c.
                - блокирует "Запуск", активирует "Остановку"
                - Устанавливает флаг работы в True.
         """
@@ -250,10 +262,14 @@ class GTUWindow(QMainWindow):
             self.sim_timer.start(1000)
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
+            # Сброс счетчиков при новом запуске
+            self.simulation_step = 0
+            self.step_timer = 0
+            self.simulator.set_mode(GTUMode.START)  # Начинаем с пуска
 
     def _stop_simulation(self):
         """
-            - Останавливает QTimer => прерывается генерация новых данных
+            - прерывается генерация новых данных
             - Блокирует "Остановку", активирует "Запуск"
             - состояние «ОЖИДАНИЕ» на главном label
             - Сбрасывает флаг работы в False.
