@@ -1,8 +1,6 @@
 # интерфейс тестовая версия
 import sys
 import requests
-import threading
-from gtu_simulator import GTUSimulator, GTUMode
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
                              QPushButton, QGroupBox, QHeaderView)
@@ -23,7 +21,7 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Авторизация")
         self.setModal(True)
-        self.resize(300, 160)
+        self.resize(300, 200)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -38,9 +36,30 @@ class LoginDialog(QDialog):
         layout.addWidget(self.input_pass)
 
         self.btn_enter = QPushButton("Войти")
-        self.btn_enter.clicked.connect(self.accept)  # Заглушка: всегда успех
+        self.btn_enter.clicked.connect(self._do_login)
         layout.addWidget(self.btn_enter)
+
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red")
+        layout.addWidget(self.error_label)
+
         self.setLayout(layout)
+
+    def _do_login(self):
+        login = self.input_login.text()
+        pwd = self.input_pass.text()
+        try:
+            resp = requests.post("http://127.0.0.1:8000/api/auth/login",
+                                 json={"login": login, "password": pwd},
+                                 timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                self.token = data["token"]  # сохраняем токен
+                self.accept()
+            else:
+                self.error_label.setText("Неверный логин или пароль")
+        except Exception:
+            self.error_label.setText("Ошибка соединения")
 
 
 class ChangePasswordDialog(QDialog):
@@ -68,12 +87,13 @@ class ChangePasswordDialog(QDialog):
 class GTUWindow(QMainWindow):
     """ Главное окно приложения.
     """
-    def __init__(self):
+    def __init__(self, token):
         """
         инициализация mainwindow настраивает заголовок, размеры, флаги состояния,
         создаёт QTimer для опроса сервера
         """
         super().__init__()
+        self.token = token
         self.setWindowTitle("Мониторинг ГТУ")
         self.resize(850, 600)
 
@@ -94,9 +114,8 @@ class GTUWindow(QMainWindow):
         """ строит главный интерфейс
             - Добавляет блок отображения текущего режима
             - Создаёт таблицу для показаний датчиков (6 строк × 3 столбца)
-            - Размещает пустую заглушку для будущего журнала логов
             - Кнопки «Запуск» и «Остановка»
-            - Строкастатуса окна
+            - Строка статуса окна
         """
         central = QWidget()
         self.setCentralWidget(central)
@@ -150,12 +169,13 @@ class GTUWindow(QMainWindow):
         Получает данные с сервера через API и обновляет UI.
         Выполняется в отдельном потоке, чтобы не блокировать интерфейс.
         """
-        if not self.sim_running:
+        if not self.sim_running or not self.token:
             return
 
         try:
             # Запрос к серверу за текущим статусом
-            response = requests.get(f"{self.API_URL}/api/status", timeout=2)
+            headers = {"Authorization": f"Bearer {self.token}"}
+            response = requests.get(f"{self.API_URL}/api/status", headers=headers, timeout=2)
 
             if response.status_code == 200:
                 data = response.json()
@@ -284,15 +304,19 @@ class GTUWindow(QMainWindow):
         При успешном входе снова показывает главное окно."""
         self.hide()
         login = LoginDialog(self)
-        if login.exec() == QDialog.DialogCode.Accepted:
+        if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
+            self.token = login.token
             self.show()
+            self._start_simulation()
+        else:
+            self.close()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     login = LoginDialog()
-    if login.exec() == QDialog.DialogCode.Accepted:
+    if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
         # успешный вход - запускаем mainwindow
-        window = GTUWindow()
+        window = GTUWindow(token=login.token)
         window.show()
         sys.exit(app.exec())
     else:

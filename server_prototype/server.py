@@ -18,15 +18,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import socket
 
-from orchestrator import Orchestrator
+from server_prototype.orchestrator import Orchestrator
 from auth_system_united import (
     AuthSystem, AuthConfig,
     BcryptHasher, TokenService,
     SQLiteUserRepository,
     User,
     UserNotFound, InvalidPassword, AccountLocked,
-    RateLimitExceeded, PasswordValidation, PermissionDenied,
-)
+    RateLimitExceeded, PasswordValidation, )
 from stubs import audit_service, logger
 
 

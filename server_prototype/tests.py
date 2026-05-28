@@ -117,7 +117,7 @@ class TestGTUSimulatorGenValue(unittest.TestCase):
 
 #  GTUAnalyzer
 
-from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
+from server_prototype.gtu_analyzer import GTUAnalyzer, MODE_LIMITS
 
 
 class TestGTUAnalyzerClassification(unittest.TestCase):
@@ -237,7 +237,7 @@ class TestGTUAnalyzerModeLimitsIntegrity(unittest.TestCase):
 
 #  Storage
 
-from storage import Storage, SensorRecord
+from server_prototype.storage import Storage, SensorRecord
 
 
 class TestStorage(unittest.TestCase):
@@ -320,7 +320,7 @@ class TestStorage(unittest.TestCase):
 
 #  Orchestrator
 
-from orchestrator import Orchestrator
+from server_prototype.orchestrator import Orchestrator
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -451,7 +451,7 @@ class TestAPI(unittest.TestCase):
         Поднимаем приложение один раз на весь класс.
         Патчим пути к БД чтобы не трогать рабочие файлы.
         """
-        import server
+        from server_prototype import server
 
         # Пересобираем AuthSystem с тестовой БД
         config     = AuthConfig(bcrypt_rounds=4, jwt_secret="test-api-secret",
