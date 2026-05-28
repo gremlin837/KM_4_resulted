@@ -91,7 +91,7 @@ class AuditStorage:    # Абстракция хранилища событий 
         raise NotImplementedError
 
 
-class SQLiteAuditStorage(AuditStorage):    # Реализация хранилища на SQLite.
+class SQLiteAuditStorage(AuditStorage):    # Реализация хранилища на SQLite
     def __init__(self, db_path: str = "audit.db"):
         self.db_path = db_path
         self._init_database()
@@ -255,7 +255,7 @@ class SQLiteAuditStorage(AuditStorage):    # Реализация хранили
         )
 
 
-class AuditService:    # Сервис аудита действий пользователей и системных событий.
+class AuditService:    # Сервис аудита действий пользователей и системных событий
     def __init__(self, storage: Optional[AuditStorage] = None):
         self.storage = storage or SQLiteAuditStorage()
     
