@@ -1,5 +1,7 @@
 # интерфейс тестовая версия
 import sys
+import requests
+import threading
 from gtu_simulator import GTUSimulator, GTUMode
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
@@ -65,39 +67,25 @@ class ChangePasswordDialog(QDialog):
 
 class GTUWindow(QMainWindow):
     """ Главное окно приложения.
-     Методы отвечают за вид UI, генерацию тестовых данных, управление таймером итд.
     """
     def __init__(self):
         """
         инициализация mainwindow настраивает заголовок, размеры, флаги состояния,
-        создаёт QTimer для обновления данных, запускает стартовую генерацию
+        создаёт QTimer для опроса сервера
         """
         super().__init__()
-        self.setWindowTitle("Мониторинг ГТУ (Тестовый клиент)")
+        self.setWindowTitle("Мониторинг ГТУ")
         self.resize(850, 600)
-        self.sim_running = False # флаг
 
-        # Инициализация реального симулятора
-        self.simulator = GTUSimulator(interval=1.0)
-        self.current_sim_mode = GTUMode.STOP  # Текущий режим симуляции
-        self.sim_thread = None  # Поток для фоновой смены режимов (но здесь используется таймер GUI)
+        # Настройки подключения к серверу
+        self.API_URL = "http://127.0.0.1:8000"
+        self.is_connected = False
+        self.sim_running = False  # флаг
 
 
-        self.simulation_step = 0  # Шаг симуляции (0-START, 1-IDLE, ... итд)
-        self.step_timer = 0  # Счетчик секунд внутри текущего шага
-
-        # Конфигурация цикла из Приложение 1 (сколько по времени длится каждый режим)
-        self.cycle_config = [
-            (GTUMode.START, 200),
-            (GTUMode.IDLE, 300),
-            (GTUMode.PARTIAL, 450),
-            (GTUMode.NOMINAL, 500),
-            (GTUMode.EMERGENCY, 50),
-            (GTUMode.STOP, 300)
-        ]
-
-        self.sim_timer = QTimer(self) # таймер для переодического обновления данных(1 секунда)
-        self.sim_timer.timeout.connect(self._generate_and_update)
+        # Таймер для обновления UI (теперь он только триггерит запрос к API)
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._fetch_data_from_server)
 
         self._setup_ui()
         self._start_simulation()
@@ -157,50 +145,54 @@ class GTUWindow(QMainWindow):
 
         self.statusBar().showMessage("Готово к работе")
 
-    def _generate_and_update(self):
+    def _fetch_data_from_server(self):
         """
-        Получает данные от реального симулятора GTUSimulator(Приложение 1) и обновляет UI.
-        Также управляет циклической сменой режимов работы ГТУ.
+        Получает данные с сервера через API и обновляет UI.
+        Выполняется в отдельном потоке, чтобы не блокировать интерфейс.
         """
-        # Смена режимов (cycle_worker из Приложения 1)
-        if self.sim_running:
-            mode, duration = self.cycle_config[self.simulation_step]
+        if not self.sim_running:
+            return
 
-            # Если текущий режим симулятора не совпадает с запланированным, он заменяется
-            if self.simulator.current_mode != mode:
-                self.simulator.set_mode(mode)
-                self.current_sim_mode = mode
+        try:
+            # Запрос к серверу за текущим статусом
+            response = requests.get(f"{self.API_URL}/api/status", timeout=2)
 
-            self.step_timer += 1
-            # Если время этапа истекло => начинается следующий
-            if self.step_timer >= duration:
-                self.step_timer = 0
-                self.simulation_step = (self.simulation_step + 1) % len(self.cycle_config)
+            if response.status_code == 200:
+                data = response.json()
 
-            # Получение показаний от симулятора
-            readings = self.simulator.get_readings()
+                # Сервер возвращает структуру: {"readings": {...}, "mode": "...", "anomalies": [...]}
+                readings = data.get("readings", {})
+                mode = data.get("mode", "UNKNOWN")
+                anomalies = data.get("anomalies", [])
 
-            # значения по ключам, которые использует анализатор
-            rpm = readings['rpm']
-            temp = readings['exhaust_temp']
-            pres = readings['inlet_pressure']
-            fuel = readings['fuel_flow']
-            vib = readings['vibration']
-            iga = readings['iga_position']
+                # Извлекаем параметры (ключи должны совпадать с теми, что шлет сервер)
+                rpm = readings.get('rpm', 0)
+                temp = readings.get('exhaust_temp', 0)
+                pres = readings.get('inlet_pressure', 0)
+                fuel = readings.get('fuel_flow', 0)
+                vib = readings.get('vibration', 0)
+                iga = readings.get('iga_position', 0)
 
-            # Классификация и поиск аномалий через GTUAnalyzer
-            # Анализатор сам определит режим по оборотам, но мы можем сравнить его с ожидаемым
-            detected_mode, anomalies = GTUAnalyzer.classify(rpm, temp, pres, fuel, vib, iga)
+                # Обновляем интерфейс
+                self._update_table(rpm, temp, pres, fuel, vib, iga)
+                self._update_mode_display(mode)
 
-            # Обновление интерфейса
-            self._update_table(rpm, temp, pres, fuel, vib, iga)
-            self._update_mode_display(detected_mode)  # Показываем тот режим, который определил анализатор
+                # Статус бар
+                if anomalies:
+                    self.statusBar().showMessage(f"Аномалия: {anomalies[0]}", 5000)
+                else:
+                    self.statusBar().showMessage(f"Режим: {mode} | Данные получены с сервера")
 
-            # Статус бар (снизу слева)
-            if anomalies:
-                self.statusBar().showMessage(f"Аномалия в режиме {detected_mode}: {anomalies[0]}", 5000)
+                self.is_connected = True
             else:
-                self.statusBar().showMessage(f"Режим: {detected_mode} | Параметры в норме")
+                self.statusBar().showMessage(f"Ошибка сервера: {response.status_code}", 3000)
+                self.is_connected = False
+
+        except requests.exceptions.ConnectionError:
+            self.statusBar().showMessage("Нет связи с сервером", 3000)
+            self.is_connected = False
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка: {str(e)}", 3000)
 
     def _update_table(self, rpm, temp, pres, fuel, vib, iga):
         """
@@ -253,34 +245,27 @@ class GTUWindow(QMainWindow):
 
     def _start_simulation(self):
         """
-               Запуск процесса генерации данных.
-               - блокирует "Запуск", активирует "Остановку"
-               - Устанавливает флаг работы в True.
+        Запускает таймер опроса сервера
         """
         if not self.sim_running:
             self.sim_running = True
-            self.sim_timer.start(1000)
+            self.update_timer.start(1000)
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
-            # Сброс счетчиков при новом запуске
-            self.simulation_step = 0
-            self.step_timer = 0
-            self.simulator.set_mode(GTUMode.START)  # Начинаем с пуска
+            self.statusBar().showMessage("Подключение к серверу...")
 
     def _stop_simulation(self):
         """
-            - прерывается генерация новых данных
-            - Блокирует "Остановку", активирует "Запуск"
-            - состояние «ОЖИДАНИЕ» на главном label
-            - Сбрасывает флаг работы в False.
+        останавливает опрос сервера
         """
         if self.sim_running:
             self.sim_running = False
-            self.sim_timer.stop()
+            self.update_timer.stop()
             self.btn_start.setEnabled(True)
             self.btn_stop.setEnabled(False)
             self.lbl_mode.setText("ОЖИДАНИЕ")
             self.lbl_mode.setStyleSheet("background-color: #333; color: white; border-radius: 8px; padding: 10px;")
+            self.statusBar().showMessage("Опрос остановлен")
 
     def _create_account_menu(self):
         """Формирует выпадающее меню для кнопки Аккаунт"""
