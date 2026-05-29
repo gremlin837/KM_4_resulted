@@ -102,6 +102,9 @@ class GTUWindow(QMainWindow):
         self.is_connected = False
         self.sim_running = False  # флаг
 
+        self.log_timer = QTimer(self) # таймер для логов
+        self.log_timer.timeout.connect(self._fetch_audit_logs)
+
 
         # Таймер для обновления UI (теперь он только триггерит запрос к API)
         self.update_timer = QTimer(self)
@@ -140,14 +143,14 @@ class GTUWindow(QMainWindow):
         params_layout.addWidget(self.tbl_params)
         main_layout.addWidget(params_box)
 
-        # Заглушка журнала логов (в будущем здесь будет логирование в реальном времени)
-        stub_box = QGroupBox("Журнал событий")
-        stub_layout = QVBoxLayout(stub_box)
-        self.lbl_stub = QLabel("", alignment=Qt.AlignmentFlag.AlignCenter)
-        self.lbl_stub.setFixedHeight(40)
-        self.lbl_stub.setStyleSheet("background-color: #f5f5f5; border: 1px dashed #ccc; color: #999;")
-        stub_layout.addWidget(self.lbl_stub)
-        main_layout.addWidget(stub_box)
+        log_box = QGroupBox("Журнал событий")
+        log_layout = QVBoxLayout(log_box)
+        self.log_table = QTableWidget(0, 4)  # 4 колонки
+        self.log_table.setHorizontalHeaderLabels(["Время", "Пользователь", "Событие", "Описание"])
+        self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.log_table.setAlternatingRowColors(True)
+        log_layout.addWidget(self.log_table)
+        main_layout.addWidget(log_box)
 
         # Управление (кнопки остановка и запуск начинают и прерывают мониторинг соответственно)
         ctrl_layout = QHBoxLayout()
@@ -163,6 +166,39 @@ class GTUWindow(QMainWindow):
         main_layout.addLayout(ctrl_layout)
 
         self.statusBar().showMessage("Готово к работе")
+
+    def _fetch_audit_logs(self):
+        if not self.sim_running or not self.token:
+            return
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            resp = requests.get(f"{self.API_URL}/api/audit?limit=50", headers=headers, timeout=2)
+            if resp.status_code == 200:
+                events = resp.json()
+                print("Got events:", len(events))
+                self._update_log_table(events)
+            elif resp.status_code == 401:
+                self._handle_logout()
+            else:
+                print("Audit error", resp.text)
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка получения логов: {e}", 3000)
+
+    def _update_log_table(self, events):
+        self.log_table.setRowCount(0)
+        for event in events:
+            row = self.log_table.rowCount()
+            self.log_table.insertRow(row)
+            self.log_table.setItem(row, 0, QTableWidgetItem(event.get("timestamp", "")))
+            self.log_table.setItem(row, 1, QTableWidgetItem(event.get("username", "")))
+            self.log_table.setItem(row, 2, QTableWidgetItem(event.get("event_type", "")))
+            desc = event.get("description", "")
+            # если описание слишком длинное, обрезаем
+            if len(desc) > 80:
+                desc = desc[:77] + "..."
+            self.log_table.setItem(row, 3, QTableWidgetItem(desc))
+        # Прокручиваем к последней записи (снизу)
+        self.log_table.scrollToBottom()
 
     def _fetch_data_from_server(self):
         """
@@ -269,6 +305,7 @@ class GTUWindow(QMainWindow):
         """
         if not self.sim_running:
             self.sim_running = True
+            self.log_timer.start(3000)  # обновлять каждые 3 секунды
             self.update_timer.start(1000)
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
@@ -280,6 +317,7 @@ class GTUWindow(QMainWindow):
         """
         if self.sim_running:
             self.sim_running = False
+            self.log_timer.stop()
             self.update_timer.stop()
             self.btn_start.setEnabled(True)
             self.btn_stop.setEnabled(False)
@@ -309,6 +347,7 @@ class GTUWindow(QMainWindow):
             self.show()
             self._start_simulation()
         else:
+            self.log_timer.stop()
             self.close()
 
 if __name__ == "__main__":
