@@ -18,15 +18,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import socket
 
-from server_prototype.orchestrator import Orchestrator
+from orchestrator import Orchestrator
 from auth_system_united import (
     AuthSystem, AuthConfig,
     BcryptHasher, TokenService,
     SQLiteUserRepository,
     User,
     UserNotFound, InvalidPassword, AccountLocked,
-    RateLimitExceeded, PasswordValidation, )
-from stubs import audit_service, logger
+    RateLimitExceeded, PasswordValidation, PermissionDenied,
+)
+
+# ИЗМЕНЕНО: импорт реальных сервисов вместо stubs
+from logging_service import get_logging_service, LogLevel, LogCategory
+from audit_service import get_audit_service, AuditEventType, AuditSeverity
+
+# ИЗМЕНЕНО: создание экземпляров
+_logger = get_logging_service().get_logger("server")
+_audit = get_audit_service()
 
 
 # Инициализация AuthSystem
@@ -53,10 +61,10 @@ _orchestrator = Orchestrator(poll_interval=1.0, auto_cycle=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _orchestrator.start()
-    logger.info("Сервер запущен")
+    _logger.info("Сервер запущен")          # ИЗМЕНЕНО
     yield
     _orchestrator.stop()
-    logger.info("Сервер завершает работу")
+    _logger.info("Сервер завершает работу") # ИЗМЕНЕНО
 
 
 # Приложение
@@ -95,10 +103,21 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> Use
     Выбрасывает HTTP 401 при невалидном/отсутствующем токене.
     """
     if not authorization or not authorization.startswith("Bearer "):
+        # ИЗМЕНЕНО: логируем попытку несанкционированного доступа
+        _audit.log_unauthorized_access(
+            username="unknown",
+            resource="API",
+            ip_address=None
+        )
         raise HTTPException(status_code=401, detail="Требуется токен авторизации")
     token = authorization.split(" ", 1)[1]
     user = _auth_system.get_user_from_token(token)
     if not user:
+        _audit.log_unauthorized_access(
+            username="unknown",
+            resource="API",
+            ip_address=None
+        )
         raise HTTPException(status_code=401, detail="Токен недействителен или истёк")
     return user
 
@@ -122,10 +141,8 @@ def login(body: LoginRequest, request: Request):
     try:
         user, message = _auth_system.authenticate(body.login, body.password, client_ip)
         token = _auth_system.create_token(user)
-        audit_service.log_event(
-            user_id=0, action="login",
-            details=f"login={body.login} ip={client_ip}"
-        )
+        # ИЗМЕНЕНО: аудит успешного входа
+        _audit.log_login_success(username=user.username, ip_address=client_ip)
         return {
             "token": token,
             "message": message,
@@ -133,11 +150,20 @@ def login(body: LoginRequest, request: Request):
             "is_admin": user.is_admin,
         }
     except RateLimitExceeded as e:
+        # ИЗМЕНЕНО: логируем превышение лимита
+        _audit.log_event(
+            event_type=AuditEventType.RATE_LIMIT_EXCEEDED,
+            username=body.login,
+            description=f"Rate limit exceeded for IP {client_ip}",
+            severity=AuditSeverity.MEDIUM,
+            ip_address=client_ip
+        )
         raise HTTPException(status_code=429, detail=str(e))
     except AccountLocked as e:
+        _audit.log_login_failed(username=body.login, reason="Account locked", ip_address=client_ip)
         raise HTTPException(status_code=423, detail=str(e))
     except (UserNotFound, InvalidPassword) as e:
-        # Единственное сообщение — не раскрываем, что именно неверно
+        _audit.log_login_failed(username=body.login, reason="Invalid credentials", ip_address=client_ip)
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
 
@@ -156,10 +182,8 @@ def change_password(body: ChangePasswordRequest,
     except PasswordValidation as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    audit_service.log_event(
-        user_id=0, action="change_password",
-        details=f"user={current_user.username}"
-    )
+    # ИЗМЕНЕНО: аудит смены пароля
+    _audit.log_password_change(username=current_user.username, changed_by=current_user.username)
     return {"message": "Пароль успешно изменён"}
 
 
@@ -171,6 +195,13 @@ def get_status(current_user: User = Depends(get_current_user)):
     state = _orchestrator.get_current_state()
     if not state["readings"]:
         raise HTTPException(status_code=503, detail="Данные ещё не получены от датчиков")
+    # ИЗМЕНЕНО: логируем чтение данных
+    _audit.log_event(
+        event_type=AuditEventType.DATA_READ,
+        username=current_user.username,
+        description=f"User {current_user.username} requested current status",
+        severity=AuditSeverity.LOW
+    )
     return state
 
 
@@ -183,7 +214,39 @@ def get_history(limit: int = 100,
     """
     if not (1 <= limit <= 1000):
         raise HTTPException(status_code=400, detail="limit должен быть от 1 до 1000")
+    # ИЗМЕНЕНО: логируем чтение истории
+    _audit.log_event(
+        event_type=AuditEventType.DATA_READ,
+        username=current_user.username,
+        description=f"User {current_user.username} requested history (limit={limit})",
+        severity=AuditSeverity.LOW
+    )
     return _orchestrator.get_history(limit)
+
+@app.get("/api/audit", summary="Получить последние события аудита")
+def get_audit_events(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user)
+):
+    """Возвращает последние события аудита (требуется авторизация)."""
+    if not (1 <= limit <= 200):
+        raise HTTPException(status_code=400, detail="limit от 1 до 200")
+    from audit_service import get_audit_service
+    audit = get_audit_service()
+    events = audit.search_events(limit=limit)
+    result = []
+    for ev in events:
+        result.append({
+            "id": ev.id,
+            "timestamp": ev.timestamp,
+            "event_type": ev.event_type.value,
+            "severity": ev.severity.value,
+            "username": ev.username,
+            "ip_address": ev.ip_address,
+            "description": ev.description,
+            "details": ev.details,
+        })
+    return result
 
 
 # Проверка работоспособности
@@ -208,6 +271,6 @@ def _get_free_port(preferred: int = 8000) -> int:
 if __name__ == "__main__":
     port = _get_free_port(8000)
     if port != 8000:
-        logger.warning(f"Порт 8000 занят, используется порт {port}")
-    logger.info(f"Сервер запускается на http://0.0.0.0:{port}")
+        _logger.warning(f"Порт 8000 занят, используется порт {port}")   # ИЗМЕНЕНО
+    _logger.info(f"Сервер запускается на http://0.0.0.0:{port}")        # ИЗМЕНЕНО
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
