@@ -5,18 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e2c53832-5c93-4b62-84f1-d7c258ab2e90" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/auth_module/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/auth_module/auth.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/auth_module/memory_repository.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/auth_module/un_tests.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/auth.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/exceptions.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hasher.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/hasher.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/interfaces.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/interfaces.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/token_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/auth_module/token_service.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -47,6 +37,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python tests.Python tests in un_tests.py.executor": "Run",
     "Python.test_hash.executor": "Run",
     "Python.tests.executor": "Run",
     "Python.token_service.executor": "Run",
