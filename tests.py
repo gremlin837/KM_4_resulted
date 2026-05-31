@@ -117,7 +117,7 @@ class TestGTUSimulatorGenValue(unittest.TestCase):
 
 #  GTUAnalyzer
 
-from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
+from server_prototype.gtu_analyzer import GTUAnalyzer, MODE_LIMITS
 
 
 class TestGTUAnalyzerClassification(unittest.TestCase):
@@ -237,7 +237,7 @@ class TestGTUAnalyzerModeLimitsIntegrity(unittest.TestCase):
 
 #  Storage
 
-from storage import Storage, SensorRecord
+from server_prototype.storage import Storage, SensorRecord
 
 
 class TestStorage(unittest.TestCase):
@@ -320,7 +320,7 @@ class TestStorage(unittest.TestCase):
 
 #  Orchestrator
 
-from orchestrator import Orchestrator
+from server_prototype.orchestrator import Orchestrator
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -451,7 +451,7 @@ class TestAPI(unittest.TestCase):
         Поднимаем приложение один раз на весь класс.
         Патчим пути к БД чтобы не трогать рабочие файлы.
         """
-        import server
+        from server_prototype import server
 
         # Пересобираем AuthSystem с тестовой БД
         config     = AuthConfig(bcrypt_rounds=4, jwt_secret="test-api-secret",
@@ -480,6 +480,9 @@ class TestAPI(unittest.TestCase):
             {"timestamp": time.time(), "mode": "NOMINAL", "anomalies": []}
         ]
         server._orchestrator = mock_orch
+
+        cls.mock_audit = MagicMock()
+        server._audit = cls.mock_audit
 
         cls.client = TestClient(server.app, raise_server_exceptions=False)
 
@@ -590,6 +593,170 @@ class TestAPI(unittest.TestCase):
             json={"current_password": "Admin@12345", "new_password": "NewValid@99"},
         )
         self.assertEqual(resp.status_code, 401)
+
+    # /api/audit
+
+    def test_audit_endpoint_requires_auth(self):
+        """Без токена /api/audit возвращает 401."""
+        resp = self.client.get("/api/audit")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_audit_endpoint_for_admin_returns_events(self):
+        """Админ получает список событий аудита."""
+        resp = self.client.get("/api/audit", headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIsInstance(data, list)
+        # хотя бы одно событие (например, успешный логин в setUpClass)
+        if data:
+            event = data[0]
+            self.assertIn("id", event)
+            self.assertIn("event_type", event)
+            self.assertIn("username", event)
+
+    def test_audit_endpoint_respects_limit(self):
+        """Параметр limit ограничивает количество событий."""
+        resp = self.client.get("/api/audit?limit=1", headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 200)
+        self.assertLessEqual(len(resp.json()), 1)
+
+        resp = self.client.get("/api/audit?limit=999", headers=self.auth_headers)
+        self.assertEqual(resp.status_code, 400)  # limit > 200
+
+    def test_audit_endpoint_non_admin_sees_only_own_events(self):
+        """Обычный пользователь видит только свои логи."""
+        # Создаём обычного пользователя
+        create_resp = self.client.post(
+            "/api/admin/create-user",
+            params={"username": "testuser", "password": "Test@1234"},
+            headers=self.auth_headers  # админ создаёт
+        )
+        self.assertEqual(create_resp.status_code, 200)
+
+        # Логинимся как обычный пользователь
+        login_resp = self.client.post("/api/auth/login", json={
+            "login": "testuser", "password": "Test@1234"
+        })
+        self.assertEqual(login_resp.status_code, 200)
+        user_token = login_resp.json()["token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        # Запрашиваем аудит от имени обычного пользователя
+        resp = self.client.get("/api/audit", headers=user_headers)
+        self.assertEqual(resp.status_code, 200)
+        events = resp.json()
+        # Все события должны принадлежать testuser
+        for ev in events:
+            self.assertEqual(ev["username"], "testuser")
+
+    def test_audit_login_success_logged(self):
+        self.mock_audit.reset_mock()
+        self.client.post("/api/auth/login",
+                         json={"login": "admin", "password": "Admin@12345"})
+        self.mock_audit.log_login_success.assert_called_once_with(
+            username="admin", ip_address="testclient"
+        )
+
+    def test_audit_login_failed_logged(self):
+        self.mock_audit.reset_mock()
+        self.client.post("/api/auth/login",
+                         json={"login": "admin", "password": "wrong"})
+        self.mock_audit.log_login_failed.assert_called_once()
+
+    def test_audit_password_change_logged(self):
+        self.mock_audit.reset_mock()
+        # Меняем пароль
+        self.client.post("/api/auth/change-password",
+                         json={"current_password": "Admin@12345",
+                               "new_password": "Temp@123"},
+                         headers=self.auth_headers)
+        self.mock_audit.log_password_change.assert_called_once_with(
+            username="admin", changed_by="admin"
+        )
+        # Возвращаем старый пароль (чтобы не сломать последующие тесты)
+        self.client.post("/api/auth/change-password",
+                         json={"current_password": "Temp@123",
+                               "new_password": "Admin@12345"},
+                         headers=self.auth_headers)
+
+    def test_audit_status_read_logged(self):
+        self.mock_audit.reset_mock()
+        self.client.get("/api/status", headers=self.auth_headers)
+        self.mock_audit.log_event.assert_called_once()
+        args, _ = self.mock_audit.log_event.call_args
+        self.assertEqual(args[0], AuditEventType.DATA_READ)
+
+    def test_audit_create_user_logged(self):
+        self.mock_audit.reset_mock()
+        self.client.post("/api/admin/create-user",
+                         params={"username": "audituser", "password": "Audit@123"},
+                         headers=self.auth_headers)
+        self.mock_audit.log_event.assert_called_once()
+        args, _ = self.mock_audit.log_event.call_args
+        self.assertEqual(args[0], AuditEventType.USER_CREATED)
+
+    # /api/admin/create-user
+
+    def test_create_user_admin_only(self):
+        """Не-админ не может создать пользователя."""
+        # Создаём обычного пользователя
+        self.client.post(
+            "/api/admin/create-user",
+            params={"username": "norm", "password": "Norm@1234"},
+            headers=self.auth_headers
+        )
+        login = self.client.post("/api/auth/login", json={
+            "login": "norm", "password": "Norm@1234"
+        })
+        user_token = login.json()["token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        resp = self.client.post(
+            "/api/admin/create-user",
+            params={"username": "shouldfail", "password": "Fail@1234"},
+            headers=user_headers
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_create_user_success(self):
+        """Админ успешно создаёт пользователя."""
+        resp = self.client.post(
+            "/api/admin/create-user",
+            params={"username": "alice", "password": "Alice@1234"},
+            headers=self.auth_headers
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("успешно создан", resp.json()["message"])
+
+        # Проверяем, что можно залогиниться
+        login = self.client.post("/api/auth/login", json={
+            "login": "alice", "password": "Alice@1234"
+        })
+        self.assertEqual(login.status_code, 200)
+
+    def test_create_user_duplicate(self):
+        """Повторное создание того же пользователя возвращает 400."""
+        self.client.post(
+            "/api/admin/create-user",
+            params={"username": "bob", "password": "Bob@1234"},
+            headers=self.auth_headers
+        )
+        resp = self.client.post(
+            "/api/admin/create-user",
+            params={"username": "bob", "password": "Another@1234"},
+            headers=self.auth_headers
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("уже существует", resp.json()["detail"])
+
+    def test_create_user_invalid_password(self):
+        """Пароль не проходит валидацию → 422."""
+        resp = self.client.post(
+            "/api/admin/create-user",
+            params={"username": "weak", "password": "weak"},
+            headers=self.auth_headers
+        )
+        self.assertEqual(resp.status_code, 422)
 
 
 if __name__ == "__main__":
