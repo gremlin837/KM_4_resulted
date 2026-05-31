@@ -1,8 +1,8 @@
 # интерфейс тестовая версия
 import sys
+from xml.sax.handler import property_lexical_handler
+
 import requests
-import threading
-from gtu_simulator import GTUSimulator, GTUMode
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
                              QPushButton, QGroupBox, QHeaderView)
@@ -23,7 +23,7 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Авторизация")
         self.setModal(True)
-        self.resize(300, 160)
+        self.resize(300, 200)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -38,15 +38,38 @@ class LoginDialog(QDialog):
         layout.addWidget(self.input_pass)
 
         self.btn_enter = QPushButton("Войти")
-        self.btn_enter.clicked.connect(self.accept)  # Заглушка: всегда успех
+        self.btn_enter.clicked.connect(self._do_login)
         layout.addWidget(self.btn_enter)
+
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red")
+        layout.addWidget(self.error_label)
+
         self.setLayout(layout)
+
+    def _do_login(self):
+        login = self.input_login.text()
+        pwd = self.input_pass.text()
+        try:
+            resp = requests.post("http://127.0.0.1:8000/api/auth/login",
+                                 json={"login": login, "password": pwd},
+                                 timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                self.token = data["token"]  # сохраняем токен
+                self.is_admin = data.get("is_admin", False)
+                self.accept()
+            else:
+                self.error_label.setText("Неверный логин или пароль")
+        except Exception:
+            self.error_label.setText("Ошибка соединения")
 
 
 class ChangePasswordDialog(QDialog):
-    """Заглушка окна смены пароля"""
-    def __init__(self, parent=None):
+    """Смена пароля"""
+    def __init__(self, parent=None, token=None):
         super().__init__(parent)
+        self.token = token
         self.setWindowTitle("Смена пароля")
         self.setModal(True)
         self.resize(320, 220)
@@ -54,33 +77,118 @@ class ChangePasswordDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout()
-        for label_text in ["Текущий пароль:", "Новый пароль:", "Подтверждение нового пароля:"]:
-            layout.addWidget(QLabel(label_text))
-            inp = QLineEdit()
-            inp.setEchoMode(QLineEdit.EchoMode.Password)
-            layout.addWidget(inp)
+        self.old_pass = QLineEdit()
+        self.old_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_pass = QLineEdit()
+        self.new_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_pass = QLineEdit()
+        self.confirm_pass.setEchoMode(QLineEdit.EchoMode.Password)
+
+        layout.addWidget(QLabel("Текущий пароль:"))
+        layout.addWidget(self.old_pass)
+        layout.addWidget(QLabel("Новый пароль:"))
+        layout.addWidget(self.new_pass)
+        layout.addWidget(QLabel("Подтверждение:"))
+        layout.addWidget(self.confirm_pass)
 
         self.btn_save = QPushButton("Сохранить")
-        self.btn_save.clicked.connect(self.accept)  # Заглушка
+        self.btn_save.clicked.connect(self._do_change)
         layout.addWidget(self.btn_save)
+
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red")
+        layout.addWidget(self.error_label)
         self.setLayout(layout)
+
+    def _do_change(self):
+        if self.new_pass.text() != self.confirm_pass.text():
+            self.error_label.setText("Новый пароль и подтверждение не совпадают")
+            return
+        try:
+            resp = requests.post(
+                "http://127.0.0.1:8000/api/auth/change-password",
+                json={"current_password": self.old_pass.text(),
+                      "new_password": self.new_pass.text()},
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                self.accept()
+            else:
+                detail = resp.json().get("detail", "Ошибка")
+                self.error_label.setText(detail)
+        except Exception as e:
+            self.error_label.setText(f"Ошибка соединения: {e}")
+
+class CreateUserDialog(QDialog):
+    def __init__(self, parent=None, token=None):
+        super().__init__(parent)
+        self.token = token
+        self.setWindowTitle("Создание пользователя")
+        self.setModal(True)
+        self.resize(300, 200)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Логин:"))
+        self.input_login = QLineEdit()
+        layout.addWidget(self.input_login)
+        layout.addWidget(QLabel("Пароль:"))
+        self.input_pass = QLineEdit()
+        self.input_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.input_pass)
+        self.btn_create = QPushButton("Создать")
+        self.btn_create.clicked.connect(self._do_create)
+        layout.addWidget(self.btn_create)
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red")
+        layout.addWidget(self.error_label)
+        self.setLayout(layout)
+
+    def _do_create(self):
+        login = self.input_login.text().strip()
+        pwd = self.input_pass.text()
+        if not login or not pwd:
+            self.error_label.setText("Заполните все поля")
+            return
+        try:
+            resp = requests.post(
+                "http://127.0.0.1:8000/api/admin/create-user",
+                params={"username": login, "password": pwd},
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                self.accept()
+            else:
+                detail = resp.json().get("detail", "Ошибка")
+                self.error_label.setText(detail)
+        except Exception as e:
+            self.error_label.setText(f"Ошибка: {e}")
 
 class GTUWindow(QMainWindow):
     """ Главное окно приложения.
     """
-    def __init__(self):
+    def __init__(self, token, is_admin):
         """
         инициализация mainwindow настраивает заголовок, размеры, флаги состояния,
         создаёт QTimer для опроса сервера
         """
         super().__init__()
-        self.setWindowTitle("Мониторинг ГТУ")
+        self.token = token
+        self.is_admin = is_admin
+        role_text = "Администратор" if self.is_admin else "Пользователь"
+        self.setWindowTitle(f"Мониторинг ГТУ ({role_text})")
         self.resize(850, 600)
 
         # Настройки подключения к серверу
         self.API_URL = "http://127.0.0.1:8000"
         self.is_connected = False
         self.sim_running = False  # флаг
+
+        self.log_timer = QTimer(self) # таймер для логов
+        self.log_timer.timeout.connect(self._fetch_audit_logs)
 
 
         # Таймер для обновления UI (теперь он только триггерит запрос к API)
@@ -94,9 +202,8 @@ class GTUWindow(QMainWindow):
         """ строит главный интерфейс
             - Добавляет блок отображения текущего режима
             - Создаёт таблицу для показаний датчиков (6 строк × 3 столбца)
-            - Размещает пустую заглушку для будущего журнала логов
             - Кнопки «Запуск» и «Остановка»
-            - Строкастатуса окна
+            - Строка статуса окна
         """
         central = QWidget()
         self.setCentralWidget(central)
@@ -121,14 +228,14 @@ class GTUWindow(QMainWindow):
         params_layout.addWidget(self.tbl_params)
         main_layout.addWidget(params_box)
 
-        # Заглушка журнала логов (в будущем здесь будет логирование в реальном времени)
-        stub_box = QGroupBox("Журнал событий")
-        stub_layout = QVBoxLayout(stub_box)
-        self.lbl_stub = QLabel("", alignment=Qt.AlignmentFlag.AlignCenter)
-        self.lbl_stub.setFixedHeight(40)
-        self.lbl_stub.setStyleSheet("background-color: #f5f5f5; border: 1px dashed #ccc; color: #999;")
-        stub_layout.addWidget(self.lbl_stub)
-        main_layout.addWidget(stub_box)
+        log_box = QGroupBox("Журнал событий")
+        log_layout = QVBoxLayout(log_box)
+        self.log_table = QTableWidget(0, 4)  # 4 колонки
+        self.log_table.setHorizontalHeaderLabels(["Время", "Пользователь", "Событие", "Описание"])
+        self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.log_table.setAlternatingRowColors(True)
+        log_layout.addWidget(self.log_table)
+        main_layout.addWidget(log_box)
 
         # Управление (кнопки остановка и запуск начинают и прерывают мониторинг соответственно)
         ctrl_layout = QHBoxLayout()
@@ -145,17 +252,51 @@ class GTUWindow(QMainWindow):
 
         self.statusBar().showMessage("Готово к работе")
 
+    def _fetch_audit_logs(self):
+        if not self.sim_running or not self.token:
+            return
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            resp = requests.get(f"{self.API_URL}/api/audit?limit=50", headers=headers, timeout=2)
+            if resp.status_code == 200:
+                events = resp.json()
+                print("Got events:", len(events))
+                self._update_log_table(events)
+            elif resp.status_code == 401:
+                self._handle_logout()
+            else:
+                print("Audit error", resp.text)
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка получения логов: {e}", 3000)
+
+    def _update_log_table(self, events):
+        self.log_table.setRowCount(0)
+        for event in events:
+            row = self.log_table.rowCount()
+            self.log_table.insertRow(row)
+            self.log_table.setItem(row, 0, QTableWidgetItem(event.get("timestamp", "")))
+            self.log_table.setItem(row, 1, QTableWidgetItem(event.get("username", "")))
+            self.log_table.setItem(row, 2, QTableWidgetItem(event.get("event_type", "")))
+            desc = event.get("description", "")
+            # если описание слишком длинное, обрезаем
+            if len(desc) > 80:
+                desc = desc[:77] + "..."
+            self.log_table.setItem(row, 3, QTableWidgetItem(desc))
+        # Прокручиваем к последней записи (снизу)
+        self.log_table.scrollToBottom()
+
     def _fetch_data_from_server(self):
         """
         Получает данные с сервера через API и обновляет UI.
         Выполняется в отдельном потоке, чтобы не блокировать интерфейс.
         """
-        if not self.sim_running:
+        if not self.sim_running or not self.token:
             return
 
         try:
             # Запрос к серверу за текущим статусом
-            response = requests.get(f"{self.API_URL}/api/status", timeout=2)
+            headers = {"Authorization": f"Bearer {self.token}"}
+            response = requests.get(f"{self.API_URL}/api/status", headers=headers, timeout=2)
 
             if response.status_code == 200:
                 data = response.json()
@@ -249,6 +390,7 @@ class GTUWindow(QMainWindow):
         """
         if not self.sim_running:
             self.sim_running = True
+            self.log_timer.start(3000)  # обновлять каждые 3 секунды
             self.update_timer.start(1000)
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
@@ -260,6 +402,7 @@ class GTUWindow(QMainWindow):
         """
         if self.sim_running:
             self.sim_running = False
+            self.log_timer.stop()
             self.update_timer.stop()
             self.btn_start.setEnabled(True)
             self.btn_stop.setEnabled(False)
@@ -271,28 +414,58 @@ class GTUWindow(QMainWindow):
         """Формирует выпадающее меню для кнопки Аккаунт"""
         menu = QMenu(self)
         menu.addAction("Сменить пароль", self._open_change_password)
+        if self.is_admin:
+            menu.addAction("Создать пользователя", self._create_user)
         menu.addAction("Выйти", self._handle_logout)
         return menu
 
+    def _create_user(self):
+        dialog = CreateUserDialog(self, token=self.token)
+        if dialog.exec():
+            self.statusBar().showMessage("Новый пользователь создан", 3000)
+
     def _open_change_password(self):
         """Показывает окно смены пароля (заглушка)"""
-        dialog = ChangePasswordDialog(self)
-        dialog.exec()
+        dialog = ChangePasswordDialog(self, token=self.token)
+        if dialog.exec():
+            self.StatusBar().showMessage("Пароль успешно изменён", 3000)
 
     def _handle_logout(self):
         """Имитация выхода: скрывает основное окно, вызывает логин.
         При успешном входе снова показывает главное окно."""
+        self.log_table.setRowCount(0)  # очищаем старые логи
         self.hide()
         login = LoginDialog(self)
-        if login.exec() == QDialog.DialogCode.Accepted:
+        if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
+            self.token = login.token
+            self.is_admin = login.is_admin
+            self._update_account_menu()
+            # обновляем заголовок при смене пользователя (его роли)
+            role_text = "Администратор" if self.is_admin else "Пользователь"
+            self.setWindowTitle(f"Мониторинг ГТУ ({role_text})")
+            #перезапуск обновления интерфейса
+            self._stop_simulation()
+            self._start_simulation()
             self.show()
+        else:
+            self.log_timer.stop()
+            self.close()
+
+    def _update_account_menu(self):
+        """Обновляет меню кнопки Аккаунт в зависимости от прав пользователя(после перелогина)"""
+        menu = QMenu(self)
+        menu.addAction("Сменить пароль", self._open_change_password)
+        if self.is_admin:
+            menu.addAction("Создать пользователя", self._create_user)
+        menu.addAction("Выйти", self._handle_logout)
+        self.btn_account.setMenu(menu)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     login = LoginDialog()
-    if login.exec() == QDialog.DialogCode.Accepted:
+    if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
         # успешный вход - запускаем mainwindow
-        window = GTUWindow()
+        window = GTUWindow(token=login.token, is_admin=login.is_admin)
         window.show()
         sys.exit(app.exec())
     else:
