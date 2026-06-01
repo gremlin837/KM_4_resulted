@@ -1,4 +1,3 @@
-
 """
 Единая система аутентификации
 Объединяет: config, exceptions, hasher, interfaces, memory_repository, models, token_service, auth
@@ -14,7 +13,6 @@ import threading
 import sqlite3
 import bcrypt
 import jwt
-
 
 
 # ИСКЛЮЧЕНИЯ
@@ -54,7 +52,6 @@ class PasswordValidation(AuthError):
     pass
 
 
-
 # КОНФИГУРАЦИЯ
 
 @dataclass
@@ -66,7 +63,7 @@ class AuthConfig:
 
     # Rate limiting
     rate_limit_window: int = 60  # секунд
-    rate_limit_max: int = 5      # запросов за окно
+    rate_limit_max: int = 5  # запросов за окно
 
     # Требования к паролю
     admin_min_length: int = 8
@@ -84,7 +81,6 @@ class AuthConfig:
 
     # Разное
     time_offset: int = 3  # часов для last_login
-
 
 
 # МОДЕЛИ ДАННЫХ
@@ -110,7 +106,6 @@ class User:
         return int((self.locked_until - int(time.time())) / 60)
 
 
-
 # ИНТЕРФЕЙСЫ
 
 
@@ -131,7 +126,11 @@ class UserRepository(ABC):
         pass
 
     @abstractmethod
-    def create_user(self, username: str, password_hash: str, is_admin: bool) -> None:
+    def create_user(
+            self,
+            username: str,
+            password_hash: str,
+            is_admin: bool) -> None:
         """Создать нового пользователя"""
         pass
 
@@ -139,39 +138,6 @@ class UserRepository(ABC):
     def all_users(self) -> List[str]:
         """Получить список всех имён пользователей"""
         pass
-
-
-
-# # РЕАЛИЗАЦИЯ ХРАНИЛИЩА В ПАМЯТИ (ДЛЯ ТЕСТОВ)
-#
-# class InMemoryUserRepository(UserRepository):
-#     """In-memory реализация репозитория пользователей для тестирования"""
-#
-#     def __init__(self):
-#         self._users: Dict[str, Dict[str, Any]] = {}
-#
-#     def get_user(self, username: str) -> Optional[Dict[str, Any]]:
-#         user = self._users.get(username)
-#         if not user:
-#             return None
-#         return user.copy()
-#
-#     def update_user(self, username: str, **fields) -> None:
-#         if username in self._users:
-#             self._users[username].update(fields)
-#
-#     def create_user(self, username: str, password_hash: str, is_admin: bool) -> None:
-#         self._users[username] = {
-#             'hash': password_hash,
-#             'is_admin': is_admin,
-#             'failed': 0,
-#             'locked_until': 0,
-#             'need_change': False
-#         }
-#
-#     def all_users(self) -> List[str]:
-#         return list(self._users.keys())
-
 
 
 # ХЕШИРОВАНИЕ ПАРОЛЕЙ (BCRYPT)
@@ -196,17 +162,16 @@ class BcryptHasher:
         return bcrypt.checkpw(password.encode(), stored_hash.encode())
 
 
-
 # JWT ТОКЕНЫ
 
 class TokenService:
     """Создание и проверка JWT токенов"""
 
     def __init__(
-        self,
-        secret: str,
-        algorithm: str = "HS256",
-        expire_minutes: int = 1440
+            self,
+            secret: str,
+            algorithm: str = "HS256",
+            expire_minutes: int = 1440
     ):
         self.secret = secret
         self.algorithm = algorithm
@@ -230,18 +195,17 @@ class TokenService:
             return None
 
 
-
 # ОСНОВНАЯ СИСТЕМА АУТЕНТИФИКАЦИИ
 
 class AuthSystem:
     """Основная система аутентификации"""
 
     def __init__(
-        self,
-        user_repository: UserRepository,
-        hasher: BcryptHasher = None,
-        token_service: TokenService = None,
-        config: AuthConfig = None
+            self,
+            user_repository: UserRepository,
+            hasher: BcryptHasher = None,
+            token_service: TokenService = None,
+            config: AuthConfig = None
     ):
         self.repo = user_repository
         self.hasher = hasher or BcryptHasher(config)
@@ -274,7 +238,6 @@ class AuthSystem:
         self._rate_limit_store[client_ip].append(now)
 
     # Работа с кешем
-
 
     def _load_user(self, username: str) -> Optional[User]:
         """Загружает пользователя из репозитория в кеш"""
@@ -311,6 +274,10 @@ class AuthSystem:
         """Инвалидирует кеш для пользователя"""
         self._cache.pop(username, None)
 
+    def refresh_user(self, username: str) -> Optional[User]:
+        """Принудительно обновляет пользователя из БД, инвалидируя кэш"""
+        self._invalidate_cache(username)
+        return self._load_user(username)
 
     # Валидация пароля
 
@@ -336,17 +303,18 @@ class AuthSystem:
                 f"Нужен хотя бы один спецсимвол ({self.config.special_chars})"
             )
 
-    def _check_password_contains_username(self, password: str, username: str) -> None:
+    def _check_password_contains_username(
+            self, password: str, username: str) -> None:
         """Проверяет, что пароль не содержит логин"""
         if username.lower() in password.lower():
             raise PasswordValidation("Пароль не должен содержать логин")
 
     # Основные методы
     def authenticate(
-        self,
-        username: str,
-        password: str,
-        client_ip: str = None
+            self,
+            username: str,
+            password: str,
+            client_ip: str = None
     ) -> Tuple[User, str]:
         """Аутентификация пользователя"""
         if client_ip:
@@ -365,7 +333,6 @@ class AuthSystem:
             # Разблокировка по истечении времени
             user.failed_attempts = 0
             user.locked_until = 0
-            self._save_user(user)
 
         # Проверка пароля
         if not self.hasher.verify_password(password, user.password_hash):
@@ -376,19 +343,28 @@ class AuthSystem:
                 self._save_user(user)
                 self._invalidate_cache(username)
                 raise AccountLocked(
-                    f"Аккаунт заблокирован на {self.config.lockout_minutes} мин.")
+                    f"Аккаунт заблокирован на {
+                        self.config.lockout_minutes} мин.")
             self._save_user(user)
             remaining = self.config.max_attempts - user.failed_attempts
             raise InvalidPassword(
                 f"Неверный пароль. Осталось попыток: {remaining}")
 
-        # Успешный вход
+        # Успешный вход - сброс счетчиков
         user.failed_attempts = 0
         user.locked_until = 0
-        self.repo.update_user(
-            username,
-            last_login=int(time.time() + self.config.time_offset * 3600)
-        )
+
+        # Обновляем last_login (с обработкой ошибок)
+        try:
+            self.repo.update_user(
+                username,
+                last_login=int(time.time() + self.config.time_offset * 3600)
+            )
+        except Exception:
+            # Игнорируем ошибку, если колонки last_login нет в БД
+            pass
+
+        # Сохраняем изменения (только один раз)
         self._save_user(user)
 
         if user.need_change_password:
@@ -405,6 +381,9 @@ class AuthSystem:
         user.password_hash = hashed['hash']
         user.need_change_password = False
         self._save_user(user)
+        # Инвалидируем кэш, чтобы при следующем запросе загрузить актуальные
+        # данные
+        self._invalidate_cache(user.username)
 
     def create_token(self, user: User) -> str:
         """Создаёт JWT для пользователя"""
@@ -429,14 +408,13 @@ class AuthSystem:
             return None
         return self._load_user(username)
 
-
     # Административные методы
 
     def reset_user_password(
-        self,
-        admin_user: User,
-        target_username: str,
-        new_password: str
+            self,
+            admin_user: User,
+            target_username: str,
+            new_password: str
     ) -> None:
         """Сброс пароля пользователя администратором"""
         if not admin_user.is_admin:
@@ -456,10 +434,10 @@ class AuthSystem:
         self._invalidate_cache(target_username)
 
     def set_user_lock(
-        self,
-        admin_user: User,
-        target_username: str,
-        lock: bool
+            self,
+            admin_user: User,
+            target_username: str,
+            lock: bool
     ) -> None:
         """Блокировка/разблокировка пользователя администратором"""
         if not admin_user.is_admin:
@@ -488,7 +466,6 @@ class AuthSystem:
         return False
 
 
-
 class SQLiteUserRepository(UserRepository):
     """
     Постоянное хранилище пользователей на SQLite.
@@ -512,9 +489,23 @@ class SQLiteUserRepository(UserRepository):
         self._lock = threading.Lock()
         with self._connect() as conn:
             conn.execute(self._CREATE_SQL)
+            self._migrate_schema(conn)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Добавляет отсутствующие колонки в таблицу users"""
+        cursor = conn.execute("PRAGMA table_info(users)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+
+        # Проверяем наличие всех необходимых колонок
+        required_columns = ['last_login']
+        for col in required_columns:
+            if col not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE users ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+                print(f"Добавлена колонка {col} в таблицу users")
 
     def get_user(self, username: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -527,19 +518,42 @@ class SQLiteUserRepository(UserRepository):
         return dict(row) if row else None
 
     def update_user(self, username: str, **fields) -> None:
-        allowed = {"hash", "is_admin", "failed", "locked_until", "need_change", "last_login"}
+        allowed = {
+            "hash",
+            "is_admin",
+            "failed",
+            "locked_until",
+            "need_change",
+            "last_login"}
         filtered = {k: v for k, v in fields.items() if k in allowed}
         if not filtered:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in filtered)
-        values = list(filtered.values()) + [username]
+
+        # Проверяем существование колонок перед обновлением
         with self._lock:
             with self._connect() as conn:
+                # Получаем список существующих колонок
+                cursor = conn.execute("PRAGMA table_info(users)")
+                existing_columns = [col[1] for col in cursor.fetchall()]
+
+                # Фильтруем только существующие колонки
+                filtered = {
+                    k: v for k,
+                    v in filtered.items() if k in existing_columns}
+                if not filtered:
+                    return
+
+                set_clause = ", ".join(f"{k} = ?" for k in filtered)
+                values = list(filtered.values()) + [username]
                 conn.execute(
                     f"UPDATE users SET {set_clause} WHERE username = ?", values
                 )
 
-    def create_user(self, username: str, password_hash: str, is_admin: bool) -> None:
+    def create_user(
+            self,
+            username: str,
+            password_hash: str,
+            is_admin: bool) -> None:
         with self._lock:
             with self._connect() as conn:
                 conn.execute(
