@@ -669,14 +669,27 @@ class TestLoggingAuditIntegration(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         
-        # Логирование
+        # Логирование - создаем директорию явно
+        self.log_dir = os.path.join(self.temp_dir, "logs")
+        os.makedirs(self.log_dir, exist_ok=True)
+        
         log_config = LoggerConfig(
-            log_dir=os.path.join(self.temp_dir, "logs"),
-            enable_console=False
+            log_dir=self.log_dir,
+            enable_console=False,
+            enable_file=True
         )
+        
+        # ВАЖНО: Сбрасываем глобальный singleton
+        import logging_service
+        logging_service._logging_service = None
         LoggingService._instance = None
         LoggingService._initialized = False
+        
+        # Создаем новый экземпляр
         self.logging_service = LoggingService(log_config)
+        
+        # Устанавливаем его как глобальный
+        logging_service._logging_service = self.logging_service
         
         # Аудит
         db_path = os.path.join(self.temp_dir, "audit.db")
@@ -685,21 +698,39 @@ class TestLoggingAuditIntegration(unittest.TestCase):
     
     def tearDown(self):
         self.logging_service.shutdown()
+        
+        # Сбрасываем глобальный singleton
+        import logging_service
+        logging_service._logging_service = None
+        LoggingService._instance = None
+        LoggingService._initialized = False
+        
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     def test_login_scenario(self):
         username = "test_user"
         ip = "192.168.1.100"
         
-        # Логирование
-        log_auth(f"Login attempt", username=username, ip=ip)
+        # Логирование - используем напрямую наш сервис
+        self.logging_service.log_event(
+            LogCategory.AUTH,
+            LogLevel.INFO,
+            f"Login attempt",
+            username=username,
+            ip=ip
+        )
         
         # Аудит
         event_id = self.audit_service.log_login_success(username, ip)
         
+        # Даем время на запись
+        time.sleep(0.1)
+        
         # Проверка логов
-        log_files = list(Path(self.temp_dir).glob("logs/AUTH_*.log"))
-        self.assertGreater(len(log_files), 0)
+        log_files = list(Path(self.log_dir).glob("AUTH_*.log"))
+        self.assertGreater(len(log_files), 0, 
+                          f"No log files found in {self.log_dir}. "
+                          f"Contents: {list(Path(self.log_dir).iterdir())}")
         
         # Проверка аудита
         event = self.audit_service.storage.get_by_id(event_id)
@@ -711,10 +742,11 @@ class TestLoggingAuditIntegration(unittest.TestCase):
         value = 5.2
         limit = 4.25
         
-        # Логирование
-        log_anomaly(
+        # Логирование - используем напрямую наш сервис
+        self.logging_service.log_event(
+            LogCategory.ANOMALY,
+            LogLevel.ERROR,
             f"Anomaly detected: {parameter}",
-            level=LogLevel.ERROR,
             value=value,
             limit=limit
         )
@@ -728,9 +760,14 @@ class TestLoggingAuditIntegration(unittest.TestCase):
             "NOMINAL"
         )
         
+        # Даем время на запись
+        time.sleep(0.1)
+        
         # Проверка логов
-        log_files = list(Path(self.temp_dir).glob("logs/ANOMALY_*.log"))
-        self.assertGreater(len(log_files), 0)
+        log_files = list(Path(self.log_dir).glob("ANOMALY_*.log"))
+        self.assertGreater(len(log_files), 0,
+                          f"No ANOMALY log files found in {self.log_dir}. "
+                          f"Available: {list(Path(self.log_dir).glob('*.log'))}")
         
         with open(log_files[0], 'r', encoding='utf-8') as f:
             content = f.read()
@@ -747,8 +784,10 @@ class TestLoggingAuditIntegration(unittest.TestCase):
         new_mode = "PARTIAL"
         operator = "operator1"
         
-        # Логирование
-        log_system(
+        # Логирование - используем напрямую наш сервис
+        self.logging_service.log_event(
+            LogCategory.MODE_CHANGE,
+            LogLevel.INFO,
             f"Mode changed: {old_mode} -> {new_mode}",
             operator=operator
         )
@@ -760,15 +799,43 @@ class TestLoggingAuditIntegration(unittest.TestCase):
             new_mode
         )
         
-        # Проверка обеих систем
-        log_files = list(Path(self.temp_dir).glob("logs/SYSTEM_*.log"))
-        self.assertGreater(len(log_files), 0)
+        # Даем время на запись
+        time.sleep(0.1)
         
+        # Проверка логов
+        log_files = list(Path(self.log_dir).glob("MODE_CHANGE_*.log"))
+        
+        # Отладочная информация
+        if len(log_files) == 0:
+            all_files = list(Path(self.log_dir).glob("*"))
+            print(f"\nDEBUG: log_dir = {self.log_dir}")
+            print(f"DEBUG: log_dir exists = {os.path.exists(self.log_dir)}")
+            print(f"DEBUG: all files in log_dir = {all_files}")
+            
+            # Проверяем, что логгер создан
+            logger = self.logging_service.get_logger("MODE_CHANGE")
+            print(f"DEBUG: logger = {logger}")
+            print(f"DEBUG: logger.handlers = {logger.handlers}")
+            for handler in logger.handlers:
+                print(f"DEBUG: handler = {handler}")
+                if hasattr(handler, 'baseFilename'):
+                    print(f"DEBUG: handler.baseFilename = {handler.baseFilename}")
+        
+        self.assertGreater(len(log_files), 0,
+                          f"No MODE_CHANGE log files found in {self.log_dir}. "
+                          f"Available files: {list(Path(self.log_dir).glob('*.log'))}")
+        
+        # Проверка содержимого лога
+        with open(log_files[0], 'r', encoding='utf-8') as f:
+            content = f.read()
+            self.assertIn(old_mode, content)
+            self.assertIn(new_mode, content)
+        
+        # Проверка аудита
         event = self.audit_service.storage.get_by_id(event_id)
         self.assertEqual(event.event_type, AuditEventType.MODE_CHANGED)
         self.assertEqual(event.details["old_mode"], old_mode)
         self.assertEqual(event.details["new_mode"], new_mode)
-
 
 class TestEdgeCases(unittest.TestCase):
     
@@ -865,3 +932,11 @@ if __name__ == '__main__':
     # Запуск всех тестов
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite())
+
+
+
+# python -m unittest unit_tests.TestLoggingService -v
+
+# python -m unittest unit_tests.TestAuditService -v
+
+# python -m unittest unit_tests.TestLoggingAuditIntegration -v
