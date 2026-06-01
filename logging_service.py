@@ -105,11 +105,14 @@ class LoggingService:
         return handler
     
     def _create_file_handler(self, name: str) -> logging.Handler:   # создает rotating file handler
+        # Создаем директорию, если её нет
+        os.makedirs(self.config.log_dir, exist_ok=True)
+    
         log_file = os.path.join(
             self.config.log_dir,
             f"{name}_{datetime.now().strftime('%Y%m%d')}.log"
         )
-        
+    
         handler = logging.handlers.RotatingFileHandler(
             log_file,
             maxBytes=self.config.max_file_size,
@@ -214,7 +217,11 @@ def log_anomaly(message: str, level: LogLevel = LogLevel.WARNING, **kwargs):    
     )
 
 
-def log_mode_change(message: str, level: LogLevel = LogLevel.INFO, **kwargs):   # логирование смены режима работы ГТУ
+# def log_mode_change(message: str, level: LogLevel = LogLevel.INFO, **kwargs):   # логирование смены режима работы ГТУ
+#     get_logging_service().log_event(
+#         LogCategory.MODE_CHANGE, level, message, **kwargs
+#     )
+def log_mode_change(message: str, level: LogLevel = LogLevel.INFO, **kwargs):
     get_logging_service().log_event(
         LogCategory.MODE_CHANGE, level, message, **kwargs
     )
