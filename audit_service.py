@@ -1,12 +1,13 @@
 import json
 import sqlite3
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
 from contextlib import contextmanager
+import pytz
 
 
 class AuditEventType(Enum):
@@ -64,7 +65,9 @@ class AuditEvent:
     
     def __post_init__(self):    # Автоматическая установка timestamp при создании
         if self.timestamp is None:
-            self.timestamp = datetime.utcnow().isoformat()
+            msk_tz = pytz.timezone('Europe/Moscow')
+            dt = datetime.now(msk_tz)
+            self.timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
 
 
 class AuditStorage:    # Абстракция хранилища событий аудита
@@ -400,34 +403,15 @@ class AuditService:    # Сервис аудита действий пользо
     def verify_event_integrity(self, event_id: int) -> bool:    # Проверяет целостность события
         return self.storage.verify_integrity(event_id)
     
-    def get_user_activity(
-        self,
-        username: str,
-        days: int = 7
-    ) -> List[AuditEvent]:
-        start_date = (
-            datetime.utcnow() - 
-            __import__('datetime').timedelta(days=days)
-        ).isoformat()
-        
-        return self.search_events(
-            username=username,
-            start_date=start_date,
-            limit=1000
-        )
-    
-    def get_critical_events(self, hours: int = 24) -> List[AuditEvent]:    # Получает критические события за период
+    def get_user_activity(self, username: str, days: int = 7) -> List[AuditEvent]:
+        msk_tz = pytz.timezone('Europe/Moscow')
+        start_date = (datetime.now(msk_tz) - timedelta(days=days)).strftime('%Y-%m-%m %H:%M:%S')
+        return self.search_events(username=username, start_date=start_date, limit=1000)
 
-        start_date = (
-            datetime.utcnow() - 
-            __import__('datetime').timedelta(hours=hours)
-        ).isoformat()
-        
-        return self.search_events(
-            severity=AuditSeverity.CRITICAL,
-            start_date=start_date,
-            limit=1000
-        )
+    def get_critical_events(self, hours: int = 24) -> List[AuditEvent]:
+        msk_tz = pytz.timezone('Europe/Moscow')
+        start_date = (datetime.now(msk_tz) - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+        return self.search_events(severity=AuditSeverity.CRITICAL, start_date=start_date, limit=1000)
 
 
 # Глобальный экземпляр сервиса
