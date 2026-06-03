@@ -1,6 +1,6 @@
-# интерфейс тестовая версия
+# интерфейс итоговая версия
 import sys
-from xml.sax.handler import property_lexical_handler
+from abc import ABC, abstractmethod
 
 import requests
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -10,17 +10,122 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import QDialog, QLineEdit, QMenu
 
-from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
+from gtu_analyzer import MODE_LIMITS
 
 MODE_COLORS = {
     "STOP": "#808080", "START": "#FFA500", "IDLE": "#2E8B57",
     "PARTIAL": "#1E90FF", "NOMINAL": "#228B22", "EMERGENCY": "#DC143C", "TRANSITION": "#A9A9A9"
 }
 
+
+class IApiClient(ABC):
+    """Абстрактный интерфейс для API-клиента"""
+
+    @abstractmethod
+    def login(self, login: str, password: str) -> dict:
+        """Выполняет вход, возвращает {'token': str, 'is_admin': bool}"""
+        pass
+
+    @abstractmethod
+    def get_status(self, token: str) -> dict:
+        """Возвращает текущее состояние ГТУ (readings, mode, anomalies)"""
+        pass
+
+    @abstractmethod
+    def get_audit(self, token: str, limit: int = 50) -> list:
+        """Возвращает список событий аудита"""
+        pass
+
+    @abstractmethod
+    def change_password(self, token: str, current_password: str, new_password: str) -> None:
+        """Меняет пароль текущего пользователя"""
+        pass
+
+    @abstractmethod
+    def create_user(self, token: str, username: str, password: str) -> None:
+        """Создаёт нового пользователя (только для админа)"""
+        pass
+
+class RequestsApiClient(IApiClient):
+    def __init__(self, base_url: str = "http://127.0.0.1:8000"):
+        self.base_url = base_url
+        self.session = requests.Session()  # опционально, для переиспользования соединений
+
+    def login(self, login: str, password: str) -> dict:
+        resp = self.session.post(
+            f"{self.base_url}/api/auth/login",
+            json={"login": login, "password": password},
+            timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {"token": data["token"], "is_admin": data.get("is_admin", False)}
+        elif resp.status_code == 401:
+            raise Exception("Неверный логин или пароль")
+        else:
+            raise Exception(f"Ошибка входа: {resp.status_code}")
+
+    def get_status(self, token: str) -> dict:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = self.session.get(
+            f"{self.base_url}/api/status",
+            headers=headers,
+            timeout=2
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        elif resp.status_code == 401:
+            raise Exception("Токен истёк или недействителен")
+        else:
+            raise Exception(f"Ошибка получения статуса: {resp.status_code}")
+
+    def get_audit(self, token: str, limit: int = 50) -> list:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = self.session.get(
+            f"{self.base_url}/api/audit?limit={limit}",
+            headers=headers,
+            timeout=2
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        elif resp.status_code == 401:
+            raise Exception("Токен истёк или недействителен")
+        else:
+            raise Exception(f"Ошибка получения логов: {resp.status_code}")
+
+    def change_password(self, token: str, current_password: str, new_password: str) -> None:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = self.session.post(
+            f"{self.base_url}/api/auth/change-password",
+            json={"current_password": current_password, "new_password": new_password},
+            headers=headers,
+            timeout=5
+        )
+        if resp.status_code == 200:
+            return
+        else:
+            detail = resp.json().get("detail", "Ошибка смены пароля")
+            raise Exception(detail)
+
+    def create_user(self, token: str, username: str, password: str) -> None:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = self.session.post(
+            f"{self.base_url}/api/admin/create-user",
+            params={"username": username, "password": password},
+            headers=headers,
+            timeout=5
+        )
+        if resp.status_code == 200:
+            return
+        else:
+            detail = resp.json().get("detail", "Ошибка создания пользователя")
+            raise Exception(detail)
+
 class LoginDialog(QDialog):
-    """Заглушка окна авторизации. Поля по умолчанию пустые"""
-    def __init__(self, parent=None):
+    """Окно авторизации. Поля по умолчанию пустые"""
+    def __init__(self, parent: QWidget = None, api_client: IApiClient = None):
         super().__init__(parent)
+        self.api_client = api_client
         self.setWindowTitle("Авторизация")
         self.setModal(True)
         self.resize(300, 200)
@@ -51,24 +156,20 @@ class LoginDialog(QDialog):
         login = self.input_login.text()
         pwd = self.input_pass.text()
         try:
-            resp = requests.post("http://127.0.0.1:8000/api/auth/login",
-                                 json={"login": login, "password": pwd},
-                                 timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                self.token = data["token"]  # сохраняем токен
-                self.is_admin = data.get("is_admin", False)
-                self.accept()
-            else:
-                self.error_label.setText("Неверный логин или пароль")
-        except Exception:
-            self.error_label.setText("Ошибка соединения")
+            result = self.api_client.login(login, pwd)
+            self.token = result["token"]
+            self.is_admin = result["is_admin"]
+            self.accept()
+        except Exception as e:
+            self.error_label.setText(str(e))
+
 
 
 class ChangePasswordDialog(QDialog):
     """Смена пароля"""
-    def __init__(self, parent=None, token=None):
+    def __init__(self, parent=None, api_client=None, token=None):
         super().__init__(parent)
+        self.api_client = api_client
         self.token = token
         self.setWindowTitle("Смена пароля")
         self.setModal(True)
@@ -105,24 +206,19 @@ class ChangePasswordDialog(QDialog):
             self.error_label.setText("Новый пароль и подтверждение не совпадают")
             return
         try:
-            resp = requests.post(
-                "http://127.0.0.1:8000/api/auth/change-password",
-                json={"current_password": self.old_pass.text(),
-                      "new_password": self.new_pass.text()},
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=5
+            self.api_client.change_password(
+                self.token,
+                self.old_pass.text(),
+                self.new_pass.text()
             )
-            if resp.status_code == 200:
-                self.accept()
-            else:
-                detail = resp.json().get("detail", "Ошибка")
-                self.error_label.setText(detail)
+            self.accept()
         except Exception as e:
-            self.error_label.setText(f"Ошибка соединения: {e}")
+            self.error_label.setText(str(e))
 
 class CreateUserDialog(QDialog):
-    def __init__(self, parent=None, token=None):
+    def __init__(self, parent=None, api_client=None, token=None):
         super().__init__(parent)
+        self.api_client = api_client
         self.token = token
         self.setWindowTitle("Создание пользователя")
         self.setModal(True)
@@ -153,29 +249,21 @@ class CreateUserDialog(QDialog):
             self.error_label.setText("Заполните все поля")
             return
         try:
-            resp = requests.post(
-                "http://127.0.0.1:8000/api/admin/create-user",
-                params={"username": login, "password": pwd},
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=5
-            )
-            if resp.status_code == 200:
-                self.accept()
-            else:
-                detail = resp.json().get("detail", "Ошибка")
-                self.error_label.setText(detail)
+            self.api_client.create_user(self.token, login, pwd)
+            self.accept()
         except Exception as e:
-            self.error_label.setText(f"Ошибка: {e}")
+            self.error_label.setText(str(e))
 
 class GTUWindow(QMainWindow):
     """ Главное окно приложения.
     """
-    def __init__(self, token, is_admin):
+    def __init__(self, parent=None, api_client=None, token=None, is_admin=False):
         """
         инициализация mainwindow настраивает заголовок, размеры, флаги состояния,
         создаёт QTimer для опроса сервера
         """
         super().__init__()
+        self.api_client = api_client
         self.token = token
         self.is_admin = is_admin
         role_text = "Администратор" if self.is_admin else "Пользователь"
@@ -256,16 +344,8 @@ class GTUWindow(QMainWindow):
         if not self.sim_running or not self.token:
             return
         try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            resp = requests.get(f"{self.API_URL}/api/audit?limit=50", headers=headers, timeout=2)
-            if resp.status_code == 200:
-                events = resp.json()
-                print("Got events:", len(events))
-                self._update_log_table(events)
-            elif resp.status_code == 401:
-                self._handle_logout()
-            else:
-                print("Audit error", resp.text)
+            events = self.api_client.get_audit(self.token, limit=50)
+            self._update_log_table(events)
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка получения логов: {e}", 3000)
 
@@ -288,57 +368,41 @@ class GTUWindow(QMainWindow):
     def _fetch_data_from_server(self):
         """
         Получает данные с сервера через API и обновляет UI.
-        Выполняется в отдельном потоке, чтобы не блокировать интерфейс.
+        Вызывается по таймеру в главном потоке. Блокирующий вызов requests.get()
+        может временно замораживать интерфейс при задержках сети или отсутствии сервера
         """
         if not self.sim_running or not self.token:
             return
 
         try:
-            # Запрос к серверу за текущим статусом
-            headers = {"Authorization": f"Bearer {self.token}"}
-            response = requests.get(f"{self.API_URL}/api/status", headers=headers, timeout=2)
+            data = self.api_client.get_status(self.token)
+            readings = data.get("readings", {})
+            mode = data.get("mode", "UNKNOWN")
+            anomalies = data.get("anomalies", [])
 
-            if response.status_code == 200:
-                data = response.json()
+            rpm = readings.get('rpm', 0)
+            temp = readings.get('exhaust_temp', 0)
+            pres = readings.get('inlet_pressure', 0)
+            fuel = readings.get('fuel_flow', 0)
+            vib = readings.get('vibration', 0)
+            iga = readings.get('iga_position', 0)
 
-                # Сервер возвращает структуру: {"readings": {...}, "mode": "...", "anomalies": [...]}
-                readings = data.get("readings", {})
-                mode = data.get("mode", "UNKNOWN")
-                anomalies = data.get("anomalies", [])
+            self._update_table(rpm, temp, pres, fuel, vib, iga)
+            self._update_mode_display(mode)
 
-                # Извлекаем параметры (ключи должны совпадать с теми, что шлет сервер)
-                rpm = readings.get('rpm', 0)
-                temp = readings.get('exhaust_temp', 0)
-                pres = readings.get('inlet_pressure', 0)
-                fuel = readings.get('fuel_flow', 0)
-                vib = readings.get('vibration', 0)
-                iga = readings.get('iga_position', 0)
-
-                # Обновляем интерфейс
-                self._update_table(rpm, temp, pres, fuel, vib, iga)
-                self._update_mode_display(mode)
-
-                # Статус бар
-                if anomalies:
-                    self.statusBar().showMessage(f"Аномалия: {anomalies[0]}", 5000)
-                else:
-                    self.statusBar().showMessage(f"Режим: {mode} | Данные получены с сервера")
-
-                self.is_connected = True
+            if anomalies:
+                self.statusBar().showMessage(f"Аномалия: {anomalies[0]}", 5000)
             else:
-                self.statusBar().showMessage(f"Ошибка сервера: {response.status_code}", 3000)
-                self.is_connected = False
-
-        except requests.exceptions.ConnectionError:
-            self.statusBar().showMessage("Нет связи с сервером", 3000)
-            self.is_connected = False
+                self.statusBar().showMessage(f"Режим: {mode} | Данные получены с сервера")
+            self.is_connected = True
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка: {str(e)}", 3000)
+            self.is_connected = False
 
     def _update_table(self, rpm, temp, pres, fuel, vib, iga):
         """
         Заполнение двух столбцов таблицы
-        - Принимает числовые значения параметров и вписывает их в ячейки
+        - Принимает числовые значения параметров с сервера (api/status) и вписывает их в ячейки
         - Не изменяет третий столбец «Статус» (его обновление вынесено в метод update_mode_display).
         """
         data = [
@@ -420,22 +484,22 @@ class GTUWindow(QMainWindow):
         return menu
 
     def _create_user(self):
-        dialog = CreateUserDialog(self, token=self.token)
+        dialog = CreateUserDialog(self, self.api_client, self.token)
         if dialog.exec():
             self.statusBar().showMessage("Новый пользователь создан", 3000)
 
     def _open_change_password(self):
         """Показывает окно смены пароля (заглушка)"""
-        dialog = ChangePasswordDialog(self, token=self.token)
+        dialog = ChangePasswordDialog(self, self.api_client, self.token)  # parent, api_client, token
         if dialog.exec():
-            self.StatusBar().showMessage("Пароль успешно изменён", 3000)
+            self.statusBar().showMessage("Пароль успешно изменён", 3000)
 
     def _handle_logout(self):
-        """Имитация выхода: скрывает основное окно, вызывает логин.
+        """Выход: скрывает основное окно, вызывает логин.
         При успешном входе снова показывает главное окно."""
         self.log_table.setRowCount(0)  # очищаем старые логи
         self.hide()
-        login = LoginDialog(self)
+        login = LoginDialog(parent=self, api_client=self.api_client)
         if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
             self.token = login.token
             self.is_admin = login.is_admin
@@ -462,10 +526,11 @@ class GTUWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    login = LoginDialog()
+    api_client = RequestsApiClient()
+    login = LoginDialog(parent=None, api_client=api_client)  # явно указываем имена параметров
     if login.exec() == QDialog.DialogCode.Accepted and hasattr(login, 'token'):
         # успешный вход - запускаем mainwindow
-        window = GTUWindow(token=login.token, is_admin=login.is_admin)
+        window = GTUWindow(parent=None, api_client=api_client, token=login.token, is_admin=login.is_admin)
         window.show()
         sys.exit(app.exec())
     else:
