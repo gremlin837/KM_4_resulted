@@ -1,3 +1,14 @@
+# Инструкция по запуску тестов
+
+# Тесты логов:
+# python -m unittest unit_tests.TestLoggingService -v
+
+# Тесты аудита:
+# python -m unittest unit_tests.TestAuditService -v
+
+# Тесты интеграции:
+# python -m unittest unit_tests.TestLoggingAuditIntegration -v
+
 import unittest
 import tempfile
 import shutil
@@ -932,11 +943,3 @@ if __name__ == '__main__':
     # Запуск всех тестов
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite())
-
-
-
-# python -m unittest unit_tests.TestLoggingService -v
-
-# python -m unittest unit_tests.TestAuditService -v
-
-# python -m unittest unit_tests.TestLoggingAuditIntegration -v
