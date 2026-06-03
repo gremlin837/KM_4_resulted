@@ -70,16 +70,17 @@ KM_4/
 │   ├── auth_system_united.py
 │   ├── audit_service.py
 │   ├── logging_service.py          
-│   ├── gtu_data.db
+│   ├── test_server.py
+│   ├── un_tests.py
+│   ├── unit_tests.py
 │   ├── gtu_auth.db
+│   ├── gtu_data.db
 │   └── audit.db
 │
-├── client/                       
-│   ├── __init__.py
-│   ├── main_ui_result.py         
-│   └── requirements.txt      
+├── client/                           
+│   ├── main_ui_result.py
+│   └── test_gtu_analyzer.py
 │
 ├── README.md
-├── requirements.txt  
 └── .gitignore
 ```
