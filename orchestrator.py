@@ -145,9 +145,10 @@ class Orchestrator:
                 iga=readings["iga_position"],
             )
         except KeyError as exc:
-            raise   # Пробрасываем в _poll_loop для логирования
+            # Возвращаем "UNKNOWN" и сообщение об отсутствующем ключе
+            return "UNKNOWN", [f"Отсутствует ключ датчика: {exc}"]
         except Exception as exc:
-            raise
+            return "UNKNOWN", [str(exc)]
 
     def _poll_loop(self) -> None:
         while self._state.is_running:
