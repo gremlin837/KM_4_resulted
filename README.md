@@ -29,11 +29,13 @@
 
 ## 1. Установка зависимостей
 ```bash
-pip install fastapi uvicorn bcrypt pyjwt pyqt6```
+pip install fastapi uvicorn bcrypt pyjwt pyqt6
+```
 
 ## 2. Запуск сервера
 ```bash
-python server.py```
+python server.py
+```
 
 Сервер автоматически выберет свободный порт (начиная с 8000). По умолчанию создается учетная запись администратора:
 **Логин**: ```admin```
@@ -49,7 +51,8 @@ python server.py```
 
 ## 3. Запуск клиента
 ```bash
-python main_ui_result.py```
+python main_ui_result.py
+```
 
 Открывается окно аутентификации. После ввода логина и пароля пользователь получает доступ к мониторингу
 
