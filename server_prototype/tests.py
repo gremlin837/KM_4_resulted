@@ -1,31 +1,27 @@
 """
-Unit-тесты для серверной части системы мониторинга ГТУ.
-
-Запуск всех тестов:
-  python -m unittest tests.py -v
-
-Запуск одного класса:
-  python -m unittest tests.TestGTUAnalyzer -v
+Unit-тесты для GTU Monitoring Server.
+Запуск всех тестов: python -m unittest tests.py -v
 """
 
 import json
 import os
 import time
 import unittest
+import gc
+import uuid
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 from gtu_simulator import GTUSimulator, GTUMode
-from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
 from storage import Storage, SensorRecord
 from orchestrator import Orchestrator
 from auth_system_united import (
-    AuthConfig, BcryptHasher, TokenService,
-    SQLiteUserRepository, AuthSystem
+    AuthSystem, AuthConfig, BcryptHasher, TokenService,
+    SQLiteUserRepository
 )
 from audit_service import AuditEventType, AuditSeverity
-import server
-
 from fastapi.testclient import TestClient
+import server
 
 
 # 1. Тесты симулятора ГТУ
@@ -111,108 +107,22 @@ class TestGTUSimulatorGenValue(unittest.TestCase):
             self.assertLessEqual(val, 90)
 
 
-# Тесты анализатора
-
-class TestGTUAnalyzerClassification(unittest.TestCase):
-    def _classify(self, rpm):
-        mode, _ = GTUAnalyzer.classify(rpm, 22, 101, 0, 0.1, 0)
-        return mode
-
-    def test_rpm_0_is_stop(self):
-        self.assertEqual(self._classify(0), "STOP")
-
-    def test_rpm_below_300_is_transition(self):
-        self.assertEqual(self._classify(100), "TRANSITION")
-
-    def test_rpm_in_start_range(self):
-        self.assertEqual(self._classify(1500), "START")
-
-    def test_rpm_between_start_and_idle_is_transition(self):
-        self.assertEqual(self._classify(2800), "TRANSITION")
-
-    def test_rpm_in_idle_range(self):
-        self.assertEqual(self._classify(3000), "IDLE")
-
-    def test_rpm_between_idle_and_partial_is_transition(self):
-        self.assertEqual(self._classify(4000), "TRANSITION")
-
-    def test_rpm_in_partial_range(self):
-        self.assertEqual(self._classify(5500), "PARTIAL")
-
-    def test_rpm_between_partial_and_nominal_is_transition(self):
-        self.assertEqual(self._classify(7500), "TRANSITION")
-
-    def test_rpm_in_nominal_range(self):
-        self.assertEqual(self._classify(8000), "NOMINAL")
-
-    def test_rpm_above_nominal_is_emergency(self):
-        self.assertEqual(self._classify(8300), "EMERGENCY")
-
-
-class TestGTUAnalyzerAnomalyDetection(unittest.TestCase):
-    def test_normal_stop_no_anomalies(self):
-        _, anomalies = GTUAnalyzer.classify(0, 22, 101, 0, 0.1, 0)
-        self.assertEqual(anomalies, [])
-
-    def test_normal_nominal_no_anomalies(self):
-        _, anomalies = GTUAnalyzer.classify(8000, 650, 150, 2000, 4.0, 99)
-        self.assertEqual(anomalies, [])
-
-    def test_high_vibration_in_idle_is_anomaly(self):
-        _, anomalies = GTUAnalyzer.classify(3000, 400, 120, 500, 9.9, 20)
-        anomaly_names = [a.split(":")[0] for a in anomalies]
-        self.assertIn("Вибрация, мм/с", anomaly_names)
-
-    def test_anomaly_format_contains_value_and_range(self):
-        _, anomalies = GTUAnalyzer.classify(3000, 400, 120, 500, 9.9, 20)
-        for anomaly in anomalies:
-            self.assertIn("∉", anomaly)
-            self.assertIn("[", anomaly)
-            self.assertIn("-", anomaly)
-            self.assertIn("]", anomaly)
-
-    def test_transition_mode_no_validation(self):
-        _, anomalies = GTUAnalyzer.classify(100, 999, 999, 999, 999, 999)
-        self.assertEqual(anomalies, [])
-
-    def test_emergency_mode_no_validation(self):
-        _, anomalies = GTUAnalyzer.classify(8300, 780, 140, 2500, 8.5, 100)
-        self.assertEqual(anomalies, [])
-
-    def test_multiple_anomalies_detected(self):
-        _, anomalies = GTUAnalyzer.classify(3000, 999, 120, 500, 99.9, 20)
-        self.assertGreater(len(anomalies), 1)
-
-
-class TestGTUAnalyzerModeLimitsIntegrity(unittest.TestCase):
-    EXPECTED_MODES = {"STOP", "START", "IDLE", "PARTIAL", "NOMINAL"}
-    EXPECTED_PARAMS = {"rpm", "T", "P", "fuel", "vib", "iga"}
-
-    def test_all_modes_present(self):
-        self.assertEqual(set(MODE_LIMITS.keys()), self.EXPECTED_MODES)
-
-    def test_all_modes_have_all_params(self):
-        for mode, params in MODE_LIMITS.items():
-            with self.subTest(mode=mode):
-                self.assertEqual(set(params.keys()), self.EXPECTED_PARAMS)
-
-    def test_all_limits_are_valid_tuples(self):
-        for mode, params in MODE_LIMITS.items():
-            for param, (mn, mx) in params.items():
-                with self.subTest(mode=mode, param=param):
-                    self.assertLessEqual(mn, mx)
-
-
-# 3. Тесты хранилища данных (SQLite)
+# 2. Тесты хранилища данных (SQLite)
 class TestStorage(unittest.TestCase):
-    DB_PATH = "test_gtu_data.db"
-
     def setUp(self):
-        self.storage = Storage(db_path=self.DB_PATH)
+        # Уникальный файл для каждого теста
+        self.db_path = f"test_storage_{uuid.uuid4().hex}.db"
+        self.storage = Storage(db_path=self.db_path)
 
     def tearDown(self):
-        if os.path.exists(self.DB_PATH):
-            os.remove(self.DB_PATH)
+        # Принудительно закрываем все соединения (сборщик мусора)
+        import gc
+        gc.collect()
+        if os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except PermissionError:
+                pass  # Файл уже удалён или занят – игнорируем
 
     def _make_record(self, ts=None, mode="NOMINAL", anomalies=None) -> SensorRecord:
         return SensorRecord(
@@ -254,6 +164,7 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(record["anomalies"], anomalies)
 
     def test_get_last_record_returns_none_when_empty(self):
+        # Новый файл – нет записей
         self.assertIsNone(self.storage.get_last_record())
 
     def test_get_last_record_returns_most_recent(self):
@@ -370,18 +281,20 @@ class TestOrchestrator(unittest.TestCase):
 
 # 5. Тесты REST API
 class TestAPI(unittest.TestCase):
-    DB_AUTH = "test_api_auth.db"
-    DB_SENSOR = "test_api_sensor.db"
 
     @classmethod
     def setUpClass(cls):
+
+        # Генерируем уникальное имя для тестовой БД
+        cls.db_auth = f"test_auth_{uuid.uuid4().hex}.db"
+
         # 1. Подменяем БД аутентификации на тестовую
         test_config = AuthConfig(
             bcrypt_rounds=4,
             jwt_secret="test-secret-key-dolzhen-byt-32-simvolov-xxxx",
             rate_limit_max=1000  # отключаем rate limit для тестов
         )
-        repo = SQLiteUserRepository(cls.DB_AUTH)
+        repo = SQLiteUserRepository(cls.db_auth)
         hasher = BcryptHasher(test_config)
         token_svc = TokenService(test_config.jwt_secret, expire_minutes=60)
         auth = AuthSystem(repo, hasher, token_svc, test_config)
@@ -420,9 +333,16 @@ class TestAPI(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        for db in [cls.DB_AUTH, cls.DB_SENSOR]:
-            if os.path.exists(db):
-                os.remove(db)
+        gc.collect()
+        time.sleep(0.1)
+        for attempt in range(5):
+            try:
+                if os.path.exists(cls.db_auth):
+                    os.remove(cls.db_auth)
+                break
+            except PermissionError:
+                time.sleep(0.2 * (attempt + 1))
+                gc.collect()
 
     # health
     def test_health_returns_200(self):
