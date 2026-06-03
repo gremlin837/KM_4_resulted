@@ -1,6 +1,5 @@
-# интерфейс тестовая версия
+# интерфейс итоговая версия
 import sys
-from xml.sax.handler import property_lexical_handler
 
 import requests
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -10,7 +9,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import QDialog, QLineEdit, QMenu
 
-from gtu_analyzer import GTUAnalyzer, MODE_LIMITS
+from gtu_analyzer import MODE_LIMITS
 
 MODE_COLORS = {
     "STOP": "#808080", "START": "#FFA500", "IDLE": "#2E8B57",
@@ -18,7 +17,7 @@ MODE_COLORS = {
 }
 
 class LoginDialog(QDialog):
-    """Заглушка окна авторизации. Поля по умолчанию пустые"""
+    """Окно авторизации. Поля по умолчанию пустые"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Авторизация")
@@ -288,7 +287,8 @@ class GTUWindow(QMainWindow):
     def _fetch_data_from_server(self):
         """
         Получает данные с сервера через API и обновляет UI.
-        Выполняется в отдельном потоке, чтобы не блокировать интерфейс.
+        Вызывается по таймеру в главном потоке. Блокирующий вызов requests.get()
+        может временно замораживать интерфейс при задержках сети или отсутствии сервера
         """
         if not self.sim_running or not self.token:
             return
@@ -338,7 +338,7 @@ class GTUWindow(QMainWindow):
     def _update_table(self, rpm, temp, pres, fuel, vib, iga):
         """
         Заполнение двух столбцов таблицы
-        - Принимает числовые значения параметров и вписывает их в ячейки
+        - Принимает числовые значения параметров с сервера (api/status) и вписывает их в ячейки
         - Не изменяет третий столбец «Статус» (его обновление вынесено в метод update_mode_display).
         """
         data = [
@@ -431,7 +431,7 @@ class GTUWindow(QMainWindow):
             self.StatusBar().showMessage("Пароль успешно изменён", 3000)
 
     def _handle_logout(self):
-        """Имитация выхода: скрывает основное окно, вызывает логин.
+        """Выход: скрывает основное окно, вызывает логин.
         При успешном входе снова показывает главное окно."""
         self.log_table.setRowCount(0)  # очищаем старые логи
         self.hide()
