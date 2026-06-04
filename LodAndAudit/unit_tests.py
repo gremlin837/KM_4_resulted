@@ -419,7 +419,7 @@ class TestSQLiteAuditStorage(unittest.TestCase):
         
         event_id = self.storage.save(event)
         
-        # Изменение записи напрямую в БД (Ярик не справился с троянами)
+        # Изменение записи напрямую в БД
         conn = sqlite3.connect(self.db_path)
         conn.execute(
             "UPDATE audit_events SET description = ? WHERE id = ?",
